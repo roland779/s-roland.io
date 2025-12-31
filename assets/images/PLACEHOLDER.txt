@@ -1,0 +1,2 @@
+Place your profile image here as: profile.jpg
+Recommended: square image, >= 600x600.
