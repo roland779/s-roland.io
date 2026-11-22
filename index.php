@@ -13,7 +13,7 @@ try {
     if (is_array($config) && !empty($config['password_hash']) && !$detailed
         && ($_SERVER['REQUEST_METHOD'] ?? '') === 'GET'
         && ($_SERVER['HTTP_DNT'] ?? '') !== '1' && ($_SERVER['HTTP_SEC_GPC'] ?? '') !== '1') {
-        recordPageview(analyticsDatabase($config));
+        recordPageview(analyticsStorage($config));
     }
 } catch (Throwable $e) { /* Statistics must never prevent the profile from loading. */ }
 $html = file_get_contents(__DIR__ . '/index.html');

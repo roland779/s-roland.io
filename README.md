@@ -13,6 +13,24 @@ This repository contains a minimal, multilingual (EN/DE) static personal profile
 
 The protected dashboard is at `/admin.php` (username `admin`). This feature uses PHP 8+ and PDO SQLite; no Python server is involved. Existing Python publication utilities are independent of analytics.
 
+### Hosting diagnostics
+
+On Apache, the supplied rewrite also supports `/admin` and `/admin/`. Admin asset/API URLs use a server-provided base path, including for installations in subdirectories. Admin JavaScript and CSS URLs carry content versions to prevent old cached assets after updates.
+
+If the dashboard cannot load statistics, the API now returns a specific, authenticated error code. Inspect `/analytics-api.php?action=stats` after signing in (prepend the installation subdirectory if applicable):
+
+| Code | Action |
+| --- | --- |
+| `SQLITE_MISSING` | Enable PHP's `pdo_sqlite` extension in the hosting panel or ask the host. |
+| `STORAGE_NOT_WRITABLE` | Set `data_dir` to an existing/writable private directory or grant PHP permission to create it. |
+| `STORAGE_PUBLIC` | Move `data_dir` outside the server's actual DocumentRoot, not merely outside a website subfolder. |
+| `DATABASE_NOT_WRITABLE` | Check permissions for both the database file and its containing directory. |
+| `DATABASE_BUSY` | Wait briefly and refresh. |
+| `PUBLICATIONS_MISSING` / `PUBLICATIONS_INVALID` | Upload a readable, valid `academic_website/data/publications.json`. |
+| `DATABASE_ERROR` / `ANALYTICS_ERROR` | Check the PHP error log and ensure all application files were uploaded in the same version. |
+
+Diagnostics do not expose password hashes or absolute server paths. The PHP log records the diagnostic code. The generic message `Analytics storage unavailable` from an older API does not establish the underlying cause; upload the updated API and library to obtain the specific code. The aggregate dashboard hides disabled visitor metrics even when its API fails.
+
 ### Default: server-side pageview totals without a consent dialog
 
 `analytics_mode` defaults to `aggregate`. The PHP entry point increments only a daily counter and a separate monthly counter. These counters contain no IP addresses, browser/user-agent data, referrers, visitor IDs, individual timestamps or event histories. There are no analytics cookies or analytics localStorage accesses, and the individual tracking JavaScript is not loaded. Google Fonts requests have been removed; fonts use local system fallbacks. Existing functional language/theme preferences are independent of statistics.

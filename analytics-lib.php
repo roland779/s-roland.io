@@ -1,124 +1,135 @@
 <?php
 declare(strict_types=1);
 
+require_once __DIR__ . '/analytics-csv.php';
+
 function analyticsMode(array $config): string {
     return ($config['analytics_mode'] ?? 'aggregate') === 'detailed' ? 'detailed' : 'aggregate';
 }
 
-function recordPageview(PDO $db): void {
-    $db->exec('BEGIN IMMEDIATE');
-    try {
-        $now = time();
-        $q = $db->prepare('INSERT INTO pageviews_daily VALUES (?,1) ON CONFLICT(day) DO UPDATE SET count=count+1');
-        $q->execute([gmdate('Y-m-d', $now)]);
-        incrementMonth($db, 'pageview', '', '', '', $now);
-        $q = $db->prepare("INSERT OR IGNORE INTO meta VALUES ('aggregate_start',?)"); $q->execute([(string)$now]);
-        $db->exec('COMMIT');
-    } catch (Throwable $e) { $db->exec('ROLLBACK'); throw $e; }
-}
-
-function analyticsDatabase(array $config): PDO {
+function analyticsStorage(array $config): AnalyticsCsvStore {
     $dir = $config['data_dir'] ?? '';
-    if (!$dir || (!is_dir($dir) && !@mkdir($dir, 0700, true) && !is_dir($dir))) throw new RuntimeException('Storage unavailable');
+    if (!is_string($dir) || $dir === '' || (!is_dir($dir) && !@mkdir($dir, 0700, true) && !is_dir($dir))) throw new RuntimeException('Storage unavailable');
     $resolved = realpath($dir);
+    if ($resolved === false || !is_writable($resolved)) throw new RuntimeException('Storage unavailable');
     $public = !empty($_SERVER['DOCUMENT_ROOT']) ? (realpath($_SERVER['DOCUMENT_ROOT']) ?: __DIR__) : __DIR__;
-    // Also protect CLI executions and deployments whose document root contains this checkout.
     foreach (array_unique([$public, __DIR__]) as $root) {
-        $a = strtolower(str_replace('\\', '/', $resolved));
-        $b = strtolower(rtrim(str_replace('\\', '/', $root), '/'));
+        $a = strtolower(str_replace('\\', '/', $resolved)); $b = strtolower(rtrim(str_replace('\\', '/', $root), '/'));
         if ($a === $b || str_starts_with($a . '/', $b . '/')) throw new RuntimeException('Storage must be outside document root');
     }
-    $db = new PDO('sqlite:' . $resolved . '/visits.sqlite3', null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]);
-    $db->exec('PRAGMA busy_timeout = 5000');
-    $db->exec('CREATE TABLE IF NOT EXISTS visits (id TEXT PRIMARY KEY, started REAL, updated REAL, path TEXT, referrer TEXT, ip TEXT, browser TEXT, seconds REAL, peer TEXT)');
-    $db->exec('CREATE INDEX IF NOT EXISTS visits_peer_time ON visits(peer, started)');
-    analyticsSchema($db);
-    $q = $db->prepare('DELETE FROM visits WHERE started < ?'); $q->execute([time() - 30 * 86400]);
-    $db->exec('DELETE FROM events WHERE visit NOT IN (SELECT id FROM visits)');
-    return $db;
+    $store = new AnalyticsCsvStore($resolved);
+    $store->update(static function (array &$t): void { cleanAnalytics($t); });
+    return $store;
+}
+
+function cleanAnalytics(array &$t): void {
+    $now = time();
+    $day = gmdate('Y-m-d', $now - 29 * 86400);
+    $month = (new DateTimeImmutable('first day of this month', new DateTimeZone('UTC')))->modify('-23 months')->format('Y-m');
+    $t['pageviews_daily'] = array_filter($t['pageviews_daily'], static fn($r) => $r['day'] >= $day);
+    $t['monthly'] = array_filter($t['monthly'], static fn($r) => $r['month'] >= $month);
+    $t['visits'] = array_filter($t['visits'], static fn($r) => $r['started'] >= $now - 30 * 86400);
+    $ids = array_column($t['visits'], 'id');
+    $t['events'] = array_filter($t['events'], static fn($r) => $r['created'] >= $now - 30 * 86400 && in_array($r['visit'], $ids, true));
+    $key = AnalyticsCsvStore::key(['monthly_start']);
+    if (!isset($t['meta'][$key])) AnalyticsCsvStore::put($t, 'meta', ['key'=>'monthly_start','value'=>(string)$now]);
+}
+
+function incrementMonth(array &$t, string $kind, string $pub = '', string $target = '', string $source = '', ?int $when = null): void {
+    $month = gmdate('Y-m', $when ?? time());
+    $key = AnalyticsCsvStore::key([$month,$kind,$pub,$target,$source]);
+    $count = (int)($t['monthly'][$key]['count'] ?? 0) + 1;
+    AnalyticsCsvStore::put($t,'monthly',compact('month','kind','target','source','count')+['publication'=>$pub]);
+}
+
+function recordPageview(AnalyticsCsvStore $store): void {
+    $store->update(static function(array &$t): void {
+        $day = gmdate('Y-m-d'); $key = AnalyticsCsvStore::key([$day]);
+        AnalyticsCsvStore::put($t,'pageviews_daily',['day'=>$day,'count'=>(int)($t['pageviews_daily'][$key]['count']??0)+1]);
+        incrementMonth($t,'pageview');
+        $key = AnalyticsCsvStore::key(['aggregate_start']);
+        if (!isset($t['meta'][$key])) AnalyticsCsvStore::put($t,'meta',['key'=>'aggregate_start','value'=>(string)time()]);
+    });
 }
 
 function publications(): array {
-    $data = json_decode(file_get_contents(__DIR__ . '/academic_website/data/publications.json'), true, 512, JSON_THROW_ON_ERROR);
+    $file = __DIR__ . '/academic_website/data/publications.json';
+    if (!is_readable($file)) throw new RuntimeException('Publication data unavailable');
+    $data = json_decode(file_get_contents($file), true, 512, JSON_THROW_ON_ERROR);
+    if (!is_array($data) || !is_array($data['publications'] ?? null)) throw new RuntimeException('Publication data unavailable');
     $result = [];
-    foreach ($data['publications'] as $p) {
-        if (!empty($p['citationKey'])) $result[$p['citationKey']] = $p;
-    }
+    foreach ($data['publications'] as $p) if (!empty($p['citationKey'])) $result[$p['citationKey']] = $p;
     return $result;
 }
 
-function analyticsSchema(PDO $db): void {
-    $db->exec('CREATE TABLE IF NOT EXISTS pageviews_daily (day TEXT PRIMARY KEY, count INTEGER NOT NULL)');
-    $db->exec("DELETE FROM pageviews_daily WHERE day < date('now','-29 days')");
-    $db->exec('CREATE TABLE IF NOT EXISTS events (visit TEXT, created REAL, kind TEXT, publication TEXT, target TEXT, source TEXT)');
-    $db->exec('CREATE INDEX IF NOT EXISTS events_visit ON events(visit, kind, target)');
-    $db->exec('CREATE TABLE IF NOT EXISTS monthly (month TEXT, kind TEXT, publication TEXT, target TEXT, source TEXT, count INTEGER, PRIMARY KEY(month,kind,publication,target,source))');
-    $db->exec('CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)');
-    $db->exec('CREATE TABLE IF NOT EXISTS external (publication TEXT, kind TEXT, payload TEXT, checked REAL, success REAL, error TEXT, PRIMARY KEY(publication,kind))');
-    $db->exec('CREATE TABLE IF NOT EXISTS citation_snapshots (publication TEXT, day TEXT, count INTEGER, PRIMARY KEY(publication,day))');
-    // Reserve the writer before reading the migration marker. Deferred transactions
-    // can otherwise deadlock when two first requests both try to upgrade their read lock.
-    $db->exec('BEGIN IMMEDIATE');
-    try {
-        if (!$db->query("SELECT value FROM meta WHERE key='monthly_start'")->fetchColumn()) {
-            $db->exec("INSERT OR IGNORE INTO monthly SELECT strftime('%Y-%m',started,'unixepoch'), 'visit','','',referrer,COUNT(*) FROM visits GROUP BY 1,5");
-            $q = $db->prepare("INSERT INTO meta VALUES ('monthly_start',?)"); $q->execute([(string)time()]);
+function recordVisit(AnalyticsCsvStore $store, array $config, array $input): array {
+    return $store->update(static function(array &$t) use ($config,$input): array {
+        $now = microtime(true);
+        if (array_key_exists('id',$input)) {
+            if (!is_string($input['id']) || !preg_match('/^[a-f0-9]{64}$/',$input['id']) || !is_numeric($input['seconds']??null)) return [400,[]];
+            $key=AnalyticsCsvStore::key([$input['id']]);
+            if (!isset($t['visits'][$key])) return [404,[]];
+            $row=$t['visits'][$key];
+            $row['seconds']+=max(0,min(20,(float)$input['seconds'],$now-$row['updated']));$row['updated']=$now;
+            AnalyticsCsvStore::put($t,'visits',$row);return [200,['ok'=>true]];
         }
-        $db->exec('COMMIT');
-    } catch (Throwable $e) { $db->exec('ROLLBACK'); throw $e; }
-    $q = $db->prepare('DELETE FROM events WHERE created < ?'); $q->execute([time() - 30 * 86400]);
-    $db->exec("DELETE FROM monthly WHERE month < strftime('%Y-%m','now','start of month','-23 months')");
+        if (!is_string($input['path']??null)) return [400,[]];
+        $path=parse_url($input['path'],PHP_URL_PATH);
+        if (!in_array($path,['/','/index.html','/index.php'],true)) return [400,[]];
+        $address=$_SERVER['REMOTE_ADDR']??'';$packed=@inet_pton($address);
+        if($packed===false)return [400,[]];
+        $ip=$address;
+        if(empty($config['full_ip'])){$keep=strlen($packed)===4?3:6;$ip=inet_ntop(substr($packed,0,$keep).str_repeat("\0",strlen($packed)-$keep)).(strlen($packed)===4?'/24':'/48');}
+        $peer=hash_hmac('sha256',$address,$config['password_hash']);
+        $recent=array_filter($t['visits'],static fn($r)=>$r['peer']===$peer&&$r['started']>$now-60);
+        if(count($recent)>=20)return [429,[]];
+        $ref=parse_url(is_string($input['referrer']??null)?substr($input['referrer'],0,1000):'');
+        $referrer=in_array($ref['scheme']??'',['http','https'],true)?($ref['host']??''):'';
+        $id=bin2hex(random_bytes(32));
+        AnalyticsCsvStore::put($t,'visits',['id'=>$id,'started'=>$now,'updated'=>$now,'path'=>$path,'referrer'=>$referrer,'ip'=>$ip,'browser'=>substr($_SERVER['HTTP_USER_AGENT']??'',0,300),'seconds'=>0,'peer'=>$peer]);
+        incrementMonth($t,'visit','','',$referrer);return [200,['id'=>$id]];
+    });
 }
 
-function incrementMonth(PDO $db, string $kind, string $pub = '', string $target = '', string $source = '', ?int $when = null): void {
-    $q = $db->prepare('INSERT INTO monthly VALUES (?,?,?,?,?,1) ON CONFLICT(month,kind,publication,target,source) DO UPDATE SET count=count+1');
-    $q->execute([gmdate('Y-m', $when ?? time()), $kind, $pub, $target, $source]);
+function recordEvent(AnalyticsCsvStore $store, array $input): int {
+    return $store->update(static function(array &$t) use($input): int {
+        if(!is_string($input['id']??null)||strlen($input['id'])>100)return 400;
+        $visit=$t['visits'][AnalyticsCsvStore::key([$input['id']])]??null;if(!$visit)return 404;
+        $kind=$input['kind']??'';$pub=$input['publication']??'';$target=$input['target']??'';
+        if(!is_string($kind)||!is_string($pub)||!is_string($target))return 400;
+        if($kind==='click'){$pubs=publications();if(!isset($pubs[$pub])||!in_array($target,array_merge(array_keys($pubs[$pub]['links']??[]),['bibtex-copy','bibtex-download']),true))return 400;}
+        elseif($kind==='section'){if($pub!==''||!in_array($target,['short-bio','about','research','publications','service','news','contact'],true))return 400;}
+        elseif($kind==='depth'){if($pub!==''||!in_array($target,['25','50','75','100'],true))return 400;}
+        elseif($kind==='error'){if($pub!==''||!in_array($target,['publications','i18n'],true))return 400;}
+        else return 400;
+        $events=array_filter($t['events'],static fn($r)=>$r['visit']===$input['id']);if(count($events)>=500)return 429;
+        if($kind!=='click')foreach($events as $r)if($r['kind']===$kind&&$r['target']===$target)return 200;
+        AnalyticsCsvStore::put($t,'events',['event_id'=>bin2hex(random_bytes(16)),'visit'=>$input['id'],'created'=>microtime(true),'kind'=>$kind,'publication'=>$pub,'target'=>$target,'source'=>$visit['referrer']]);
+        incrementMonth($t,$kind,$pub,$target,$visit['referrer']);return 200;
+    });
 }
 
-function recordEvent(PDO $db, array $input, float $now): int {
-    if (!is_string($input['id'] ?? null) || strlen($input['id']) > 100) return 400;
-    $q = $db->prepare('SELECT referrer FROM visits WHERE id = ?'); $q->execute([$input['id']]);
-    $visit = $q->fetch();
-    if (!$visit) return 404;
-    $kind = $input['kind'] ?? '';
-    $pub = $input['publication'] ?? '';
-    $target = $input['target'] ?? '';
-    if (!is_string($kind) || !is_string($pub) || !is_string($target)) return 400;
-    if ($kind === 'click') {
-        $pubs = publications();
-        if (!isset($pubs[$pub]) || !in_array($target, array_merge(array_keys($pubs[$pub]['links'] ?? []), ['bibtex-copy', 'bibtex-download']), true)) return 400;
-    } elseif ($kind === 'section') {
-        if ($pub !== '' || !in_array($target, ['short-bio','about','research','publications','service','news','contact'], true)) return 400;
-    } elseif ($kind === 'depth') {
-        if ($pub !== '' || !in_array($target, ['25','50','75','100'], true)) return 400;
-    } elseif ($kind === 'error') {
-        if ($pub !== '' || !in_array($target, ['publications','i18n'], true)) return 400;
-    } else return 400;
-    $q = $db->prepare('SELECT COUNT(*) FROM events WHERE visit=?'); $q->execute([$input['id']]);
-    if ((int)$q->fetchColumn() >= 500) return 429;
-    if ($kind !== 'click') {
-        $q = $db->prepare('SELECT 1 FROM events WHERE visit=? AND kind=? AND target=?'); $q->execute([$input['id'], $kind, $target]);
-        if ($q->fetchColumn()) return 200;
-    }
-    $q = $db->prepare('INSERT INTO events VALUES (?,?,?,?,?,?)');
-    $q->execute([$input['id'], $now, $kind, $pub, $target, $visit['referrer']]);
-    incrementMonth($db, $kind, $pub, $target, $visit['referrer']);
-    return 200;
-}
-
-function researchStats(PDO $db): array {
-    $external = $db->query('SELECT * FROM external')->fetchAll();
-    foreach ($external as &$row) $row['payload'] = $row['payload'] ? json_decode($row['payload'], true) : null;
-    return [
-        'publications' => array_values(publications()),
-        'monthly' => $db->query('SELECT * FROM monthly ORDER BY month')->fetchAll(),
-        'trackingStarted' => (int)$db->query("SELECT value FROM meta WHERE key='monthly_start'")->fetchColumn(),
-        'external' => $external,
-        'snapshots' => $db->query('SELECT * FROM citation_snapshots ORDER BY day')->fetchAll(),
-        'engagement' => $db->query("SELECT publication,target,COUNT(*) clicks FROM events WHERE kind='click' GROUP BY publication,target ORDER BY clicks DESC")->fetchAll(),
-        'conversion' => $db->query("SELECT v.referrer source,COUNT(DISTINCT v.id) visits,COUNT(DISTINCT e.visit) engaged,COUNT(e.visit) clicks FROM visits v LEFT JOIN events e ON e.visit=v.id AND e.kind='click' GROUP BY v.referrer ORDER BY clicks DESC")->fetchAll(),
-        'reading' => $db->query("SELECT kind,target,COUNT(*) visits FROM events WHERE kind IN ('section','depth','error') GROUP BY kind,target")->fetchAll(),
-    ];
+function analyticsStats(AnalyticsCsvStore $store, array $config): array {
+    $pubs=array_values(publications());
+    return $store->read(static function(array $t)use($config,$pubs):array{
+        $mode=analyticsMode($config);$visits=AnalyticsCsvStore::rows($t,'visits');usort($visits,static fn($a,$b)=>$b['started']<=>$a['started']);
+        $monthly=AnalyticsCsvStore::rows($t,'monthly');usort($monthly,static fn($a,$b)=>strcmp($a['month'],$b['month']));
+        $snapshots=AnalyticsCsvStore::rows($t,'citation_snapshots');usort($snapshots,static fn($a,$b)=>strcmp($a['day'],$b['day']));
+        $daily=AnalyticsCsvStore::rows($t,'pageviews_daily');usort($daily,static fn($a,$b)=>strcmp($a['day'],$b['day']));
+        $engagement=[];$reading=[];$conversion=[];$engaged=[];
+        foreach($visits as $v){$s=$v['referrer'];if(!isset($conversion[$s]))$conversion[$s]=['source'=>$s,'visits'=>0,'engaged'=>0,'clicks'=>0];$conversion[$s]['visits']++;}
+        foreach($t['events'] as $e){
+            if($e['kind']==='click'){$key=AnalyticsCsvStore::key([$e['publication'],$e['target']]);if(!isset($engagement[$key]))$engagement[$key]=['publication'=>$e['publication'],'target'=>$e['target'],'clicks'=>0];$engagement[$key]['clicks']++;$s=$e['source'];if(isset($conversion[$s])){$conversion[$s]['clicks']++;$engaged[$s][$e['visit']]=true;}}
+            else{$key=AnalyticsCsvStore::key([$e['kind'],$e['target']]);if(!isset($reading[$key]))$reading[$key]=['kind'=>$e['kind'],'target'=>$e['target'],'visits'=>0];$reading[$key]['visits']++;}
+        }
+        foreach($conversion as $s=>&$r)$r['engaged']=count($engaged[$s]??[]);unset($r);
+        $sum=array_sum(array_column($visits,'seconds'));
+        $startKey=AnalyticsCsvStore::key([$mode==='aggregate'?'aggregate_start':'monthly_start']);
+        return ['mode'=>$mode,'visits'=>$mode==='aggregate'?[]:array_slice($visits,0,1000),'totals'=>['visits'=>$mode==='aggregate'?array_sum(array_column($daily,'count')):count($visits),'average'=>$mode==='aggregate'?null:(count($visits)?$sum/count($visits):0),'total'=>$mode==='aggregate'?null:$sum],
+            'retentionDays'=>30,'fullIp'=>$mode==='detailed'&&!empty($config['full_ip']),'publications'=>$pubs,'monthly'=>$mode==='aggregate'?array_values(array_filter($monthly,static fn($r)=>$r['kind']==='pageview')):$monthly,
+            'trackingStarted'=>(int)($t['meta'][$startKey]['value']??time()),'daily'=>$daily,'external'=>AnalyticsCsvStore::rows($t,'external'),'snapshots'=>$snapshots,
+            'engagement'=>$mode==='aggregate'?[]:array_values($engagement),'reading'=>$mode==='aggregate'?[]:array_values($reading),'conversion'=>$mode==='aggregate'?[]:array_values($conversion)];
+    });
 }
 
 function resolveRedirect(string $base, string $location): string {
@@ -239,68 +250,56 @@ function checkPublicationLinks(array $pub, ?callable $request = null): array {
     return ['source' => 'HTTP-Linkprüfung', 'links' => $links];
 }
 
-function refreshResearch(PDO $db, array $config, string $pubId, string $kind, ?callable $request = null, bool $force = false): array {
-    $pubs = publications();
-    if (!isset($pubs[$pubId]) || !in_array($kind, ['citations','zenodo','links'], true)) throw new InvalidArgumentException('Unbekannte Publikation oder Datenquelle');
-    $lock = null;
-    if (!empty($config['data_dir'])) {
-        $lock = fopen($config['data_dir'] . '/source-' . hash('sha256', $pubId . ':' . $kind) . '.lock', 'c');
-        if (!$lock) throw new RuntimeException('Source lock unavailable');
-        if (!flock($lock, LOCK_EX | LOCK_NB)) { fclose($lock); return ['busy' => true]; }
-    }
-    try { return refreshResearchUnlocked($db, $config, $pubId, $kind, $request, $force); }
-    finally { if ($lock) { flock($lock, LOCK_UN); fclose($lock); } }
+function refreshResearch(AnalyticsCsvStore $store, array $config, string $pubId, string $kind, ?callable $request = null, bool $force = false): array {
+    $pubs=publications();
+    if(!isset($pubs[$pubId])||!in_array($kind,['citations','zenodo','links'],true))throw new InvalidArgumentException('Unbekannte Publikation oder Datenquelle');
+    $lock=@fopen($store->directory().'/source-'.hash('sha256',$pubId.':'.$kind).'.lock','c');
+    if(!$lock)throw new RuntimeException('Storage unavailable');
+    if(!flock($lock,LOCK_EX|LOCK_NB)){fclose($lock);return ['busy'=>true];}
+    try {
+        $key=AnalyticsCsvStore::key([$pubId,$kind]);
+        $previous=$store->read(static fn($t)=>$t['external'][$key]??null);
+        if(!$force&&!empty($previous['checked'])&&time()-$previous['checked']<3600)return ['cached'=>true];
+        try {
+            $payload=$kind==='citations'?fetchCitations($pubs[$pubId],$config,$request):($kind==='zenodo'?fetchZenodo($pubs[$pubId],$request):checkPublicationLinks($pubs[$pubId],$request));
+            $now=time();
+            $store->update(static function(array &$t)use($pubId,$kind,$payload,$now):void{
+                AnalyticsCsvStore::put($t,'external',['publication'=>$pubId,'kind'=>$kind,'payload'=>$payload,'checked'=>$now,'success'=>$now,'error'=>null]);
+                if($kind==='citations')AnalyticsCsvStore::put($t,'citation_snapshots',['publication'=>$pubId,'day'=>gmdate('Y-m-d',$now),'count'=>$payload['count']]);
+            });
+            return ['ok'=>true];
+        } catch(Throwable $e) {
+            $store->update(static function(array &$t)use($pubId,$kind,$key,$e):void{
+                $row=$t['external'][$key]??['publication'=>$pubId,'kind'=>$kind,'payload'=>null,'success'=>null];
+                $row['checked']=time();$row['error']=$e->getMessage();AnalyticsCsvStore::put($t,'external',$row);
+            });
+            return ['ok'=>false,'error'=>$e->getMessage()];
+        }
+    } finally {flock($lock,LOCK_UN);fclose($lock);}
 }
 
-function refreshResearchUnlocked(PDO $db, array $config, string $pubId, string $kind, ?callable $request, bool $force): array {
-    $pubs = publications();
-    $q = $db->prepare('SELECT checked FROM external WHERE publication=? AND kind=?'); $q->execute([$pubId,$kind]);
-    $last = $q->fetchColumn();
-    if (!$force && $last && time() - (float)$last < 3600) return ['cached' => true];
+function maintenanceStep(AnalyticsCsvStore $store, array $config, ?callable $request = null, ?int $now = null): array {
+    if(($config['automatic_refresh']??true)===false)return ['state'=>'disabled'];
+    $now=$now??time();
+    $lock=@fopen($store->directory().'/sync.lock','c');if(!$lock)throw new RuntimeException('Storage unavailable');
+    if(!flock($lock,LOCK_EX|LOCK_NB)){fclose($lock);return ['state'=>'busy'];}
     try {
-        $payload = $kind === 'citations' ? fetchCitations($pubs[$pubId], $config, $request) : ($kind === 'zenodo' ? fetchZenodo($pubs[$pubId], $request) : checkPublicationLinks($pubs[$pubId], $request));
-        $now = time();
-        $db->beginTransaction();
-        $q = $db->prepare('INSERT INTO external VALUES (?,?,?,?,?,NULL) ON CONFLICT(publication,kind) DO UPDATE SET payload=excluded.payload,checked=excluded.checked,success=excluded.success,error=NULL');
-        $q->execute([$pubId,$kind,json_encode($payload, JSON_THROW_ON_ERROR),$now,$now]);
-        if ($kind === 'citations') {
-            $q = $db->prepare('INSERT INTO citation_snapshots VALUES (?,?,?) ON CONFLICT(publication,day) DO UPDATE SET count=excluded.count');
-            $q->execute([$pubId,gmdate('Y-m-d'),$payload['count']]);
-        }
-        $db->commit(); return ['ok' => true];
-    } catch (Throwable $e) {
-        if ($db->inTransaction()) $db->rollBack();
-        $q = $db->prepare('INSERT INTO external VALUES (?,?,NULL,?,NULL,?) ON CONFLICT(publication,kind) DO UPDATE SET checked=excluded.checked,error=excluded.error');
-        $q->execute([$pubId,$kind,time(),$e->getMessage()]);
-        return ['ok' => false, 'error' => $e->getMessage()];
-    }
-}
-
-// Opportunistic maintenance: fixed jobs only, no visitor data and no client-selected targets.
-function maintenanceStep(PDO $db, array $config, ?callable $request = null, ?int $now = null): array {
-    if (($config['automatic_refresh'] ?? true) === false) return ['state' => 'disabled'];
-    $now = $now ?? time();
-    $lock = fopen($config['data_dir'] . '/sync.lock', 'c');
-    if (!$lock) throw new RuntimeException('Maintenance lock unavailable');
-    if (!flock($lock, LOCK_EX | LOCK_NB)) { fclose($lock); return ['state' => 'busy']; }
-    try {
-        $last = (int)$db->query("SELECT value FROM meta WHERE key='maintenance_attempt'")->fetchColumn();
-        if ($last && $now - $last < 60) return ['state' => 'throttled'];
-        $stored = [];
-        foreach ($db->query('SELECT publication,kind,checked,error FROM external')->fetchAll() as $row) $stored[$row['publication'] . ':' . $row['kind']] = $row;
-        $jobs = [];
-        foreach (['citations','zenodo','links'] as $kind) foreach (publications() as $id => $pub) {
-            if ($kind === 'zenodo' && empty($pub['links']['zenodo'])) continue;
-            $row = $stored[$id . ':' . $kind] ?? null;
-            $interval = !empty($row['error']) ? 3600 : ($kind === 'links' ? 7 * 86400 : 86400);
-            if (!$row || $now - (int)$row['checked'] >= $interval) $jobs[] = ['publication' => $id, 'kind' => $kind, 'checked' => (int)($row['checked'] ?? 0), 'order' => count($jobs)];
-        }
-        $q = $db->prepare("INSERT INTO meta VALUES ('maintenance_attempt',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value"); $q->execute([(string)$now]);
-        if (!$jobs) return ['state' => 'current'];
-        usort($jobs, static fn($a, $b) => ($a['checked'] <=> $b['checked']) ?: ($a['order'] <=> $b['order']));
-        $job = $jobs[0];
-        refreshResearch($db, $config, $job['publication'], $job['kind'], $request);
-        // Anonymous callers receive no private research/cache diagnostics.
-        return ['state' => 'processed'];
-    } finally { flock($lock, LOCK_UN); fclose($lock); }
+        $pubs=publications();
+        $job=$store->update(static function(array &$t)use($pubs,$now):array{
+            $key=AnalyticsCsvStore::key(['maintenance_attempt']);$last=(int)($t['meta'][$key]['value']??0);
+            if($last&&$now-$last<60)return ['state'=>'throttled'];
+            $jobs=[];
+            foreach(['citations','zenodo','links']as$kind)foreach($pubs as$id=>$pub){
+                if($kind==='zenodo'&&empty($pub['links']['zenodo']))continue;
+                $row=$t['external'][AnalyticsCsvStore::key([$id,$kind])]??null;
+                $interval=!empty($row['error'])?3600:($kind==='links'?7*86400:86400);
+                if(!$row||$now-(int)$row['checked']>=$interval)$jobs[]=['publication'=>$id,'kind'=>$kind,'checked'=>(int)($row['checked']??0),'order'=>count($jobs)];
+            }
+            AnalyticsCsvStore::put($t,'meta',['key'=>'maintenance_attempt','value'=>(string)$now]);
+            if(!$jobs)return ['state'=>'current'];
+            usort($jobs,static fn($a,$b)=>($a['checked']<=>$b['checked'])?:($a['order']<=>$b['order']));return $jobs[0];
+        });
+        if(isset($job['state']))return $job;
+        refreshResearch($store,$config,$job['publication'],$job['kind'],$request);return ['state'=>'processed'];
+    } finally {flock($lock,LOCK_UN);fclose($lock);}
 }

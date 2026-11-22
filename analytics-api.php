@@ -27,6 +27,7 @@ try {
     $config = analyticsConfig();
     $action = $_GET['action'] ?? '';
     $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
+    $adminRequest = ($action === 'stats' && $method === 'GET') || ($action === 'refresh' && $method === 'POST');
     $mode = analyticsMode($config);
     if ($action === 'config' && $method === 'GET') respond(200, ['enabled' => $mode === 'detailed', 'mode' => $mode, 'fullIp' => $mode === 'detailed' && !empty($config['full_ip'])]);
     if (($action === 'stats' && $method === 'GET') || ($action === 'refresh' && $method === 'POST')) requireAdmin($config);
@@ -43,71 +44,29 @@ try {
         if (!$decoded instanceof stdClass) respond(400, []);
         $input = (array)$decoded;
     }
-    $db = analyticsDatabase($config);
-    $now = microtime(true);
-    if ($action === 'maintenance') respond(200, maintenanceStep($db, $config));
-    if ($action === 'stats') {
-        // All cards and tables must describe the same database snapshot.
-        $db->beginTransaction();
-        $rows = $db->query('SELECT started, updated, path, referrer, ip, browser, seconds FROM visits ORDER BY started DESC LIMIT 1000')->fetchAll();
-        $totals = $db->query('SELECT COUNT(*) visits, COALESCE(AVG(seconds),0) average, COALESCE(SUM(seconds),0) total FROM visits')->fetch();
-        $payload = array_merge(['visits' => $rows, 'totals' => $totals, 'retentionDays' => 30, 'fullIp' => !empty($config['full_ip'])], researchStats($db));
-        $payload['mode'] = $mode;
-        if ($mode === 'aggregate') {
-            $payload['visits'] = []; $payload['engagement'] = []; $payload['conversion'] = []; $payload['reading'] = [];
-            $payload['totals'] = ['visits' => (int)$db->query('SELECT COALESCE(SUM(count),0) FROM pageviews_daily')->fetchColumn(), 'average' => null, 'total' => null];
-            $payload['daily'] = $db->query('SELECT day,count FROM pageviews_daily ORDER BY day')->fetchAll();
-            $payload['trackingStarted'] = (int)($db->query("SELECT value FROM meta WHERE key='aggregate_start'")->fetchColumn() ?: time());
-            $payload['fullIp'] = false;
-            $payload['monthly'] = array_values(array_filter($payload['monthly'], static fn($row) => $row['kind'] === 'pageview'));
-        }
-        $db->commit();
-        respond(200, $payload);
-    }
+    $store = analyticsStorage($config);
+    if ($action === 'maintenance') respond(200, maintenanceStep($store, $config));
+    if ($action === 'stats') respond(200, analyticsStats($store, $config));
     if ($action === 'refresh') {
         if (!is_string($input['publication'] ?? null) || !is_string($input['kind'] ?? null)) respond(400, []);
-        try { respond(200, refreshResearch($db, $config, $input['publication'], $input['kind'])); }
+        try { respond(200, refreshResearch($store, $config, $input['publication'], $input['kind'])); }
         catch (InvalidArgumentException $e) { respond(400, ['error' => $e->getMessage()]); }
     }
-    // Serialize updates so duplicate heartbeats cannot inflate active duration.
-    $db->exec('BEGIN IMMEDIATE');
-    $now = microtime(true);
-    if ($action === 'event') {
-        $status = recordEvent($db, $input, $now);
-        if ($status === 200) $db->exec('COMMIT'); else $db->exec('ROLLBACK');
-        respond($status, ['ok' => $status === 200]);
-    }
-    if (array_key_exists('id', $input)) {
-        if (!is_string($input['id']) || !preg_match('/^[a-f0-9]{64}$/', $input['id']) || !is_numeric($input['seconds'] ?? null)) respond(400, []);
-        $query = $db->prepare('SELECT updated FROM visits WHERE id = ?'); $query->execute([$input['id']]);
-        $row = $query->fetch();
-        if (!$row) respond(404, []);
-        $seconds = max(0, min(20, (float)$input['seconds'], $now - (float)$row['updated']));
-        $query = $db->prepare('UPDATE visits SET seconds = seconds + ?, updated = ? WHERE id = ?'); $query->execute([$seconds, $now, $input['id']]);
-        $db->exec('COMMIT'); respond(200, ['ok' => true]);
-    }
-    if (!is_string($input['path'] ?? null)) respond(400, []);
-    $path = parse_url($input['path'], PHP_URL_PATH);
-    if (!in_array($path, ['/', '/index.html', '/index.php'], true)) respond(400, []);
-    $address = $_SERVER['REMOTE_ADDR'] ?? '';
-    $packed = @inet_pton($address);
-    if ($packed === false) respond(400, []);
-    $ip = $address;
-    if (empty($config['full_ip'])) {
-        $keep = strlen($packed) === 4 ? 3 : 6;
-        $ip = inet_ntop(substr($packed, 0, $keep) . str_repeat("\0", strlen($packed) - $keep)) . (strlen($packed) === 4 ? '/24' : '/48');
-    }
-    // Forwarded IP headers are deliberately not trusted.
-    $peer = hash_hmac('sha256', $address, $config['password_hash']);
-    $query = $db->prepare('SELECT COUNT(*) FROM visits WHERE peer = ? AND started > ?'); $query->execute([$peer, $now - 60]);
-    if ((int)$query->fetchColumn() >= 20) respond(429, []);
-    $ref = parse_url(is_string($input['referrer'] ?? null) ? substr($input['referrer'], 0, 1000) : '');
-    $referrer = in_array($ref['scheme'] ?? '', ['http', 'https'], true) ? ($ref['host'] ?? '') : '';
-    $id = bin2hex(random_bytes(32));
-    $query = $db->prepare('INSERT INTO visits VALUES (?,?,?,?,?,?,?,?,?)');
-    $query->execute([$id, $now, $now, $path, $referrer, $ip, substr($_SERVER['HTTP_USER_AGENT'] ?? '', 0, 300), 0, $peer]);
-    incrementMonth($db, 'visit', '', '', $referrer);
-    $db->exec('COMMIT'); respond(200, ['id' => $id]);
+    if ($action === 'event') { $status=recordEvent($store,$input); respond($status,['ok'=>$status===200]); }
+    [$status,$result]=recordVisit($store,$config,$input);respond($status,$result);
 } catch (Throwable $error) {
+    if (!empty($adminRequest)) {
+        $messages = [
+            'CSV storage invalid' => ['CSV_INVALID', 'Die Statistik-CSV ist beschädigt. Datei sichern und prüfen; sie wird nicht überschrieben.'],
+            'CSV storage busy' => ['CSV_BUSY', 'Die Statistikdatei wird gerade geschrieben. Kurz warten und erneut aktualisieren.'],
+            'Storage unavailable' => ['STORAGE_NOT_WRITABLE', 'Der Statistikordner kann nicht angelegt oder beschrieben werden. data_dir und PHP-Schreibrechte prüfen.'],
+            'Storage must be outside document root' => ['STORAGE_PUBLIC', 'data_dir liegt im öffentlichen Webverzeichnis. Einen beschreibbaren Ordner außerhalb des DocumentRoot konfigurieren.'],
+            'Publication data unavailable' => ['PUBLICATIONS_MISSING', 'Die Datei academic_website/data/publications.json fehlt, ist nicht lesbar oder enthält keine gültige Publikationsliste.'],
+        ];
+        [$code, $message] = $messages[$error->getMessage()] ?? ['ANALYTICS_ERROR', 'Die Statistik konnte nicht geladen werden. PHP-Fehlerprotokoll, CSV-Datei und vollständig hochgeladene Dateien prüfen.'];
+        if ($error instanceof JsonException) { $code = 'PUBLICATIONS_INVALID'; $message = 'Die Publikationsdatei enthält ungültiges JSON. academic_website/data/publications.json prüfen.'; }
+        error_log('Analytics failure [' . $code . ']');
+        respond(503, ['error' => $message, 'code' => $code]);
+    }
     respond(503, ['error' => 'Analytics storage unavailable']);
 }

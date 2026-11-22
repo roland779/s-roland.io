@@ -1,6 +1,8 @@
 ﻿(() => {
   let data, busy = false;
   const el = id => document.getElementById(id);
+  const apiBase = new URL(document.querySelector('meta[name="analytics-base"]')?.content || './', location.href);
+  const apiUrl = action => new URL(`analytics-api.php?action=${action}`, apiBase).href;
   const node = (tag, text) => { const n = document.createElement(tag); if (text !== undefined) n.textContent = text; return n; };
   const duration = seconds => { const n = Math.round(Number(seconds)); return `${Math.floor(n/60)} min ${n%60} s`; };
   const date = seconds => seconds ? new Date(Number(seconds)*1000).toLocaleString('de-DE') : 'Noch nicht abgerufen';
@@ -39,13 +41,17 @@
     table(list,['Titel','Jahr','DOI'],p.citing.map(w=>[link(w.title,w.url),w.year,w.doi?link(w.doi.replace(/^https?:\/\/doi.org\//,''),w.doi):'Keine DOI hinterlegt']), 'In dieser Quelle wurden keine zitierenden Arbeiten gefunden.');
     if(p.partial)details.append(node('p','Liste unvollständig: maximal 1.000 Arbeiten pro Abruf. Die Gesamtzahl stammt separat von OpenAlex.'));
   }
-  function render() {
-    const aggregate = data.mode === 'aggregate';
+  function applyMode(mode) {
+    const aggregate = mode !== 'detailed';
     for (const id of ['interest','reading','visitors','error-tracking']) el(id).hidden = aggregate;
     for (const id of ['interest','reading','visitors']) document.querySelector(`.admin-nav a[href="#${id}"]`).hidden = aggregate;
     for (const id of ['average','actions']) el(id).closest('.metric').hidden = aggregate;
     el('count').parentElement.firstChild.textContent = aggregate ? 'Seitenaufrufe · 30 Kalendertage (UTC)' : 'Besuche · 30 Tage';
     if (aggregate) el('mode-note').textContent = 'Serverseitige Aufrufzählung ohne gespeicherte IP-Adressen, Browserdaten oder Besucherkennungen. Gezählt werden Seitenabrufe, einschließlich möglicher Bots und wiederholter Abrufe. Keine Messung einzelner Besuche, Klicks oder Lesetiefe. Zitationen und Zenodo-Daten bleiben unabhängig davon verfügbar.';
+  }
+  function render() {
+    const aggregate = data.mode === 'aggregate';
+    applyMode(data.mode);
     el('count').textContent=data.totals.visits;el('average').textContent=duration(data.totals.average);
     el('actions').textContent=data.engagement.reduce((n,r)=>n+Number(r.clicks),0);
     const available=data.publications.map(p=>external(p.citationKey,'citations')).filter(r=>r?.payload);
@@ -84,17 +90,34 @@
     table(el('links-table'),['Publikation','Link','Zustand','HTTP / Hinweis','Geprüft'],linkRows);
     el('visits').replaceChildren();for(const v of data.visits){const tr=node('tr');for(const value of[date(v.started),v.path,duration(v.seconds),source(v.referrer),v.ip,v.browser])tr.append(node('td',value));el('visits').append(tr);}
   }
-  async function load(){const r=await fetch('/analytics-api.php?action=stats',{cache:'no-store'});if(!r.ok)throw Error('Statistik nicht erreichbar. Anmeldung und PHP-Konfiguration prüfen.');data=await r.json();render();}
-  function controls(disabled){for(const id of['refresh','sync-research','check-links'])el(id).disabled=disabled;}
+  async function load(){
+    let r;
+    try { r=await fetch(apiUrl('stats'),{cache:'no-store',credentials:'same-origin'}); }
+    catch (_) { throw Error('Die Statistik-API ist nicht erreichbar. Verbindung und Server prüfen.'); }
+    let payload;
+    try { payload=await r.json(); }
+    catch (_) { throw Error(`Die Statistik-API liefert kein gültiges JSON (HTTP ${r.status}). API-Datei und PHP-Fehlerprotokoll prüfen.`); }
+    if(!r.ok){
+      if(r.status===401)throw Error('Die API-Anmeldung fehlt oder ist abgelaufen. Adminseite neu öffnen und erneut anmelden.');
+      if(r.status===404)throw Error('Die Statistik-API wurde nicht gefunden. analytics-api.php zusammen mit admin.php in denselben Website-Ordner hochladen.');
+      const detail=typeof payload.error==='string'?payload.error:'PHP-Konfiguration und Datenbank prüfen.';
+      const code=typeof payload.code==='string'?` [${payload.code}]`:'';
+      throw Error(`Statistik nicht verfügbar (HTTP ${r.status})${code}: ${detail}`);
+    }
+    if(!payload?.totals||!Array.isArray(payload.publications)||!Array.isArray(payload.visits))throw Error('Die Statistik-Antwort ist unvollständig. Alle Admin- und API-Dateien in derselben Version hochladen.');
+    data=payload;render();
+  }
+  function controls(disabled){el('refresh').disabled=disabled;for(const id of['sync-research','check-links'])el(id).disabled=disabled||!data;}
   async function refresh(){if(busy)return;busy=true;controls(true);try{await load();}catch(e){el('status').textContent=e.message;}finally{busy=false;controls(false);}}
   async function sync(links=false){
     if(busy||!data)return;busy=true;controls(true);const status=el(links?'link-status':'sync-status');let errors=0,cached=0,running=0;
     const jobs=data.publications.flatMap(p=>links?[[p,'links']]:[[p,'citations'],...(p.links?.zenodo?[[p,'zenodo']]:[])]);
     try{for(const [i,[p,kind]]of jobs.entries()){
       status.textContent=`${i+1}/${jobs.length}: ${p.title} · ${kind} …`;
-      try{const r=await fetch('/analytics-api.php?action=refresh',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({publication:p.citationKey,kind})});if(!r.ok)throw Error();const result=await r.json();if(result.busy)running++;else if(result.cached)cached++;else if(!result.ok)errors++;}catch(_){errors++;}
+      try{const r=await fetch(apiUrl('refresh'),{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({publication:p.citationKey,kind})});if(!r.ok)throw Error();const result=await r.json();if(result.busy)running++;else if(result.cached)cached++;else if(!result.ok)errors++;}catch(_){errors++;}
     }await load();status.textContent=`Abruf abgeschlossen: ${errors} Fehler · ${cached} bereits innerhalb der letzten Stunde geprüft${running?` · ${running} Abrufe laufen bereits; Ansicht später aktualisieren`:''}. Details und letzte erfolgreiche Stände stehen bei den Quellen.`;
     }catch(e){status.textContent=e.message;}finally{busy=false;controls(false);}
   }
-  el('refresh').onclick=refresh;el('sync-research').onclick=()=>sync();el('check-links').onclick=()=>sync(true);el('publication-filter').onchange=renderCitations;refresh();
+  el('refresh').onclick=refresh;el('sync-research').onclick=()=>sync();el('check-links').onclick=()=>sync(true);el('publication-filter').onchange=renderCitations;
+  applyMode(document.documentElement.dataset.analyticsMode || 'aggregate');refresh();
 })();

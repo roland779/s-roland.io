@@ -5,7 +5,7 @@ if (PHP_SAPI !== 'cli') { http_response_code(404); exit; }
 define('ANALYTICS_ADMIN_PAGE', true);
 require __DIR__ . '/analytics-api.php';
 $config = analyticsConfig();
-$db = analyticsDatabase($config);
+$db = analyticsStorage($config);
 $lock = fopen($config['data_dir'] . '/sync.lock', 'c');
 if (!$lock || !flock($lock, LOCK_EX | LOCK_NB)) exit(0);
 $failed = false;

@@ -78,6 +78,16 @@ async function post(data, origin=base) { return fetch(base+'/analytics-api.php?a
   assert.equal((await post({path:'/admin.php'})).status,400);
   fs.writeFileSync(path.join(publicDir,'analytics-config.php'),`<?php return ['password_hash'=>'${hash.stdout}', 'data_dir'=>__DIR__.'/unsafe-public-data', 'analytics_mode'=>'detailed', 'full_ip'=>false, 'automatic_refresh'=>false];`);
   assert.equal((await fetch(base+'/analytics-api.php?action=stats',{headers:{Authorization:auth}})).status,503,'Reject database storage in document root');
+  const unsafe=await(await fetch(base+'/analytics-api.php?action=stats',{headers:{Authorization:auth}})).json();assert.equal(unsafe.code,'STORAGE_PUBLIC');assert.ok(!JSON.stringify(unsafe).includes(publicDir),'Diagnostics must not expose server paths');
+  fs.writeFileSync(path.join(publicDir,'analytics-config.php'),`<?php return ['password_hash'=>'${hash.stdout}', 'data_dir'=>__DIR__.'/../data/visits.sqlite3'];`);
+  const unwritable=await(await fetch(base+'/analytics-api.php?action=stats',{headers:{Authorization:auth}})).json();assert.equal(unwritable.code,'STORAGE_NOT_WRITABLE');
+  fs.writeFileSync(path.join(publicDir,'analytics-config.php'),`<?php return ['password_hash'=>'${hash.stdout}', 'data_dir'=>__DIR__.'/../data'];`);
+  const noSqlite=spawn(php,['-n','-S',`127.0.0.1:${port+1}`,'-t',publicDir],{stdio:'ignore'});
+  try {
+    let result;
+    for(let i=0;i<50;i++){try{result=await fetch(`http://127.0.0.1:${port+1}/analytics-api.php?action=stats`,{headers:{Authorization:auth}});break;}catch(_){await new Promise(r=>setTimeout(r,100));}}
+    assert.ok(result);assert.equal(result.status,503);assert.equal((await result.json()).code,'SQLITE_MISSING','Diagnose missing hosting extension explicitly');
+  } finally {noSqlite.kill();await new Promise(r=>noSqlite.once('exit',r));}
   console.log('Passed: authentication/HEAD/cache headers, CLI-only tools, origin checks, malformed payload rejection, SQLite persistence, masked/full IP, bounded duration, attribution, monthly aggregates, section/depth/errors, detail expiry and private storage enforcement.');
  } finally { server.kill(); await new Promise(r=>server.once('exit',r));fs.rmSync(temp,{recursive:true,force:true}); }
 })().catch(e=>{console.error(e);process.exitCode=1;});

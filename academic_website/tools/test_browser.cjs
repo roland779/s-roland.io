@@ -10,7 +10,9 @@ const password='browser-test-only-password';
 const config=spawnSync(php,[],{input:`<?php echo "<?php return ['password_hash'=>" . var_export(password_hash('${password}', PASSWORD_DEFAULT),true) . ", 'data_dir'=>__DIR__.'/../data', 'analytics_mode'=>'detailed', 'full_ip'=>false];";`,encoding:'utf8'});
 assert.equal(config.status,0,config.stderr);fs.writeFileSync(path.join(publicDir,'analytics-config.php'),config.stdout);
 const port=22000+Math.floor(Math.random()*4000),debugPort=port+5000,base=`http://127.0.0.1:${port}`;
-const server=spawn(php,['-S',`127.0.0.1:${port}`,'-t',publicDir],{stdio:'ignore'});
+const router=path.join(temp,'router.php');
+fs.writeFileSync(router,`<?php $path=parse_url($_SERVER['REQUEST_URI'],PHP_URL_PATH);if(preg_match('~^(/nested)?/admin/?$~',$path,$m)){$_SERVER['SCRIPT_NAME']=($m[1]??'').'/admin.php';require __DIR__.'/public'.($m[1]??'').'/admin.php';return true;}return false;`);
+const server=spawn(php,['-S',`127.0.0.1:${port}`,'-t',publicDir,router],{stdio:'ignore'});
 let chrome,ws,next=1;const callbacks=new Map(),errors=[],requests=[];
 async function retry(fn){for(let i=0;i<80;i++){try{const r=await fn();if(r)return r;}catch(_){}await new Promise(r=>setTimeout(r,100));}throw Error('Timed out waiting for browser/server');}
 function command(method,params={}){return new Promise((resolve,reject)=>{const id=next++;const timer=setTimeout(()=>{callbacks.delete(id);reject(Error('CDP timeout '+method));},15000);callbacks.set(id,{resolve:v=>{clearTimeout(timer);resolve(v);},reject:e=>{clearTimeout(timer);reject(e);}});ws.send(JSON.stringify({id,method,params}));});}
@@ -93,8 +95,19 @@ async function screenshot(name){if(!process.env.QA_DIR)return;await evaluate('ne
  const denied=await fetch(base+'/analytics-api.php?action=visit',{method:'POST',headers:{Origin:base,'Content-Type':'application/json'},body:JSON.stringify({path:'/'})});assert.equal(denied.status,410,'Old tracker clients cannot start visits in aggregate mode');
  await command('Page.navigate',{url:base+'/admin.php'});await waitFor(`document.querySelector('#count')?.textContent==='1'`);
  assert.equal(await evaluate(`document.querySelector('#interest').hidden&&document.querySelector('#reading').hidden&&document.querySelector('#visitors').hidden`),true,'Unsupported individual metrics are hidden');
+ const brokenConfig=aggregateConfig.replace("__DIR__.'/../data'","__DIR__.'/unsafe-public-data'");fs.writeFileSync(path.join(publicDir,'analytics-config.php'),brokenConfig);
+ await command('Page.navigate',{url:base+'/admin/'});await waitFor(`document.querySelector('#status')?.textContent.includes('STORAGE_PUBLIC')`);
+ assert.equal(await evaluate(`document.querySelector('#interest').hidden&&document.querySelector('#visitors').hidden&&document.querySelector('#sync-research').disabled`),true,'Aggregate mode and disabled controls survive API failure');
+ fs.writeFileSync(path.join(publicDir,'analytics-config.php'),aggregateConfig);await evaluate(`document.querySelector('#refresh').click()`);await waitFor(`document.querySelector('#count')?.textContent==='1'`);
+ const nested=path.join(publicDir,'nested');fs.mkdirSync(nested);for(const f of['admin.php','analytics-api.php','analytics-lib.php'])fs.copyFileSync(path.join(publicDir,f),path.join(nested,f));fs.cpSync(path.join(publicDir,'academic_website'),path.join(nested,'academic_website'),{recursive:true});
+ fs.writeFileSync(path.join(nested,'analytics-config.php'),aggregateConfig.replace("__DIR__.'/../data'","dirname(__DIR__,2).'/data'"));
+ for(const suffix of['/admin','/admin/','/nested/admin','/nested/admin/']){
+  const before=requests.length;await command('Page.navigate',{url:base+suffix});await waitFor(`document.querySelector('#count')?.textContent==='1'`);
+  const prefix=suffix.startsWith('/nested/')?'/nested/':'/';assert.ok(requests.slice(before).some(url=>url===base+prefix+'analytics-api.php?action=stats'),'Correct API base for '+suffix);
+  assert.ok(await evaluate(`document.querySelector('script[src*="js/admin.js"]').src.includes('?v=')`),'Versioned admin assets bypass stale caches');
+ }
  assert.deepEqual(errors,[],'No uncaught browser exceptions');
- console.log('Passed in headless Chrome: dashboard, desktop/mobile, opt-in mode, withdrawal, failures, aggregate mode without prompt/tracker/fonts, PHP page counts, privacy signals, HEAD exclusion and disabled legacy tracking.');
+ console.log('Passed in headless Chrome: dashboard, desktop/mobile, opt-in/aggregate modes, page counts, API failure diagnostics/recovery, hidden inactive metrics, /admin and /admin/ aliases, subdirectory API paths and versioned assets.');
 }finally{
  if(ws){try{await command('Browser.close');}catch(_){}ws.close();}
  if(chrome)chrome.kill();server.kill();
