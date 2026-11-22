@@ -3,7 +3,7 @@
 This repository contains a minimal, multilingual (EN/DE) static personal profile website intended for academic use.
 
 **Repository contents**
-- Main page: `index.html`
+- PHP entry point: `index.php`; HTML template/static fallback: `index.html`
 - Static assets: `academic_website/images/` and `academic_website/css/`
 - Translations: `academic_website/data/i18n.json`
 - Publications data: `academic_website/data/publications.json`
@@ -12,6 +12,20 @@ This repository contains a minimal, multilingual (EN/DE) static personal profile
 ## PHP visitor statistics
 
 The protected dashboard is at `/admin.php` (username `admin`). This feature uses PHP 8+ and PDO SQLite; no Python server is involved. Existing Python publication utilities are independent of analytics.
+
+### Default: server-side pageview totals without a consent dialog
+
+`analytics_mode` defaults to `aggregate`. The PHP entry point increments only a daily counter and a separate monthly counter. These counters contain no IP addresses, browser/user-agent data, referrers, visitor IDs, individual timestamps or event histories. There are no analytics cookies or analytics localStorage accesses, and the individual tracking JavaScript is not loaded. Google Fonts requests have been removed; fonts use local system fallbacks. Existing functional language/theme preferences are independent of statistics.
+
+The profile displays no analytics consent dialog in this mode. Individual visit duration, click attribution, scroll depth and visitor details are disabled, including for old clients calling the API. The admin dashboard shows pageview totals, citations, Zenodo metrics and link checks. Counts include bots/reloads and do not represent unique people. HEAD requests and requests with `DNT: 1` or `Sec-GPC: 1` are excluded. Daily counters cover 30 UTC calendar dates, monthly counters 24 calendar months.
+
+Use **`index.php` as the homepage**. The supplied Apache `.htaccess` prioritizes it and routes direct `index.html` requests through PHP when mod_rewrite is available. Other hosting servers must configure their default page/routing accordingly. Directly serving `index.html` as a static file displays the profile without tracking or pageview counting. The built-in PHP development server chooses `index.php` for `/`.
+
+This is a technical data-minimization configuration, not a blanket legal approval. The site's privacy information and the host's separate access logs still need to reflect the actual deployment. The application does not configure or disable hosting access logs. Existing individual records from earlier opt-in operation expire under the existing retention policy; they are not exposed in the aggregate dashboard.
+
+### Setup and optional detailed mode
+
+Set `analytics_mode` to `detailed` only if you want to restore individual metrics together with the opt-in dialog. The following description of visitor-level collection applies to that optional mode.
 
 1. Copy `analytics-config.example.php` to `analytics-config.php`.
 2. Generate a strong password hash using the command in that file and set `password_hash`. Keep the configured file out of Git.

@@ -3,6 +3,9 @@
 return [
     // Generate with: php -r "echo password_hash('YOUR-LONG-PASSWORD', PASSWORD_DEFAULT), PHP_EOL;"
     'password_hash' => '',
+    // Default: server-side pageview totals, without visitor IDs or browser tracking.
+    // 'detailed' restores individual metrics AND the opt-in dialog.
+    'analytics_mode' => 'aggregate',
     // Must be outside the public document root and writable by PHP.
     'data_dir' => dirname(__DIR__) . '/analytics-private',
     'full_ip' => false,

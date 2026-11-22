@@ -1,6 +1,22 @@
 <?php
 declare(strict_types=1);
 
+function analyticsMode(array $config): string {
+    return ($config['analytics_mode'] ?? 'aggregate') === 'detailed' ? 'detailed' : 'aggregate';
+}
+
+function recordPageview(PDO $db): void {
+    $db->exec('BEGIN IMMEDIATE');
+    try {
+        $now = time();
+        $q = $db->prepare('INSERT INTO pageviews_daily VALUES (?,1) ON CONFLICT(day) DO UPDATE SET count=count+1');
+        $q->execute([gmdate('Y-m-d', $now)]);
+        incrementMonth($db, 'pageview', '', '', '', $now);
+        $q = $db->prepare("INSERT OR IGNORE INTO meta VALUES ('aggregate_start',?)"); $q->execute([(string)$now]);
+        $db->exec('COMMIT');
+    } catch (Throwable $e) { $db->exec('ROLLBACK'); throw $e; }
+}
+
 function analyticsDatabase(array $config): PDO {
     $dir = $config['data_dir'] ?? '';
     if (!$dir || (!is_dir($dir) && !@mkdir($dir, 0700, true) && !is_dir($dir))) throw new RuntimeException('Storage unavailable');
@@ -32,6 +48,8 @@ function publications(): array {
 }
 
 function analyticsSchema(PDO $db): void {
+    $db->exec('CREATE TABLE IF NOT EXISTS pageviews_daily (day TEXT PRIMARY KEY, count INTEGER NOT NULL)');
+    $db->exec("DELETE FROM pageviews_daily WHERE day < date('now','-29 days')");
     $db->exec('CREATE TABLE IF NOT EXISTS events (visit TEXT, created REAL, kind TEXT, publication TEXT, target TEXT, source TEXT)');
     $db->exec('CREATE INDEX IF NOT EXISTS events_visit ON events(visit, kind, target)');
     $db->exec('CREATE TABLE IF NOT EXISTS monthly (month TEXT, kind TEXT, publication TEXT, target TEXT, source TEXT, count INTEGER, PRIMARY KEY(month,kind,publication,target,source))');

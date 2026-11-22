@@ -74,6 +74,13 @@ $expiredMonth=(new DateTimeImmutable('first day of this month',new DateTimeZone(
 incrementMonth($limit,'visit','','','old.example',$expiredMonth->getTimestamp());analyticsSchema($limit);
 check((int)$limit->query("SELECT COUNT(*) FROM monthly WHERE source='old.example'")->fetchColumn()===0,'Delete aggregate months outside the 24-month window');
 echo "Passed: per-visit event budget, unchanged aggregates after rejected events and 24-month aggregate expiry.\n";
+check(analyticsMode([])==='aggregate','Default must not enable individual tracking');
+$pageviewsBefore=(int)$limit->query('SELECT COALESCE(SUM(count),0) FROM pageviews_daily')->fetchColumn();
+recordPageview($limit);recordPageview($limit);
+check((int)$limit->query('SELECT SUM(count) FROM pageviews_daily')->fetchColumn()===$pageviewsBefore+2,'Server pageviews increment daily totals');
+check((int)$limit->query("SELECT SUM(count) FROM monthly WHERE kind='pageview'")->fetchColumn()===2,'Server pageviews increment separate monthly totals');
+check((int)$limit->query('SELECT COUNT(*) FROM visits')->fetchColumn()===1,'Server pageviews never create visitor records');
+echo "Passed: aggregate default, daily/monthly server counters and no additional visitor records.\n";
 
 $auto = new PDO('sqlite::memory:', null, null, [PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION,PDO::ATTR_DEFAULT_FETCH_MODE=>PDO::FETCH_ASSOC]);
 $auto->exec('CREATE TABLE visits (id TEXT PRIMARY KEY, started REAL, updated REAL, path TEXT, referrer TEXT, ip TEXT, browser TEXT, seconds REAL, peer TEXT)');

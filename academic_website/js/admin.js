@@ -40,22 +40,30 @@
     if(p.partial)details.append(node('p','Liste unvollständig: maximal 1.000 Arbeiten pro Abruf. Die Gesamtzahl stammt separat von OpenAlex.'));
   }
   function render() {
+    const aggregate = data.mode === 'aggregate';
+    for (const id of ['interest','reading','visitors','error-tracking']) el(id).hidden = aggregate;
+    for (const id of ['interest','reading','visitors']) document.querySelector(`.admin-nav a[href="#${id}"]`).hidden = aggregate;
+    for (const id of ['average','actions']) el(id).closest('.metric').hidden = aggregate;
+    el('count').parentElement.firstChild.textContent = aggregate ? 'Seitenaufrufe · 30 Kalendertage (UTC)' : 'Besuche · 30 Tage';
+    if (aggregate) el('mode-note').textContent = 'Serverseitige Aufrufzählung ohne gespeicherte IP-Adressen, Browserdaten oder Besucherkennungen. Gezählt werden Seitenabrufe, einschließlich möglicher Bots und wiederholter Abrufe. Keine Messung einzelner Besuche, Klicks oder Lesetiefe. Zitationen und Zenodo-Daten bleiben unabhängig davon verfügbar.';
     el('count').textContent=data.totals.visits;el('average').textContent=duration(data.totals.average);
     el('actions').textContent=data.engagement.reduce((n,r)=>n+Number(r.clicks),0);
     const available=data.publications.map(p=>external(p.citationKey,'citations')).filter(r=>r?.payload);
     el('citation-total').textContent=available.length?`${available.reduce((n,r)=>n+Number(r.payload.count),0)}${available.length<data.publications.length?' (teilweise)':''}`:'–';
     el('status').textContent=`Aktualisiert · Besuchsdetails: ${data.retentionDays} Tage · ${data.fullIp?'Vollständige':'Gekürzte'} IP-Adressen · Monatsaggregate: 24 Monate`;
+    if (aggregate) el('status').textContent = 'Aktualisiert · Reine Aufrufzählung · Tageszahlen: 30 Kalendertage · Monatszahlen: 24 Monate';
     const rows=ResearchMetrics.monthly(data);const current=rows.at(-1),previous=rows.at(-2);
     const started=new Date(data.trackingStarted*1000).toISOString().slice(0,10);
     el('coverage').textContent=`Monatserfassung aktiviert am ${started}. Monate vor Beginn sind nicht vollständig erfasst. Der laufende Monat wird mit dem gesamten Vormonat verglichen; die Zeiträume sind unterschiedlich lang.`;
     table(el('comparison-table'),['Kennzahl',`${previous.month} · abgeschlossen`,`${current.month} · laufend`,'Differenz'],[
-      ['Besuche',previous.visits??'Nicht erfasst',current.visits??'Nicht erfasst',previous.visits===null||current.visits===null?'Nicht verfügbar':signed(current.visits-previous.visits)],
-      ['Publikationsaktionen',previous.clicks??'Nicht erfasst',current.clicks??'Nicht erfasst',previous.clicks===null||current.clicks===null?'Nicht verfügbar':signed(current.clicks-previous.clicks)],
+      [aggregate?'Seitenaufrufe':'Besuche',previous.visits??'Nicht erfasst',current.visits??'Nicht erfasst',previous.visits===null||current.visits===null?'Nicht verfügbar':signed(current.visits-previous.visits)],
+      ...(!aggregate ? [['Publikationsaktionen',previous.clicks??'Nicht erfasst',current.clicks??'Nicht erfasst',previous.clicks===null||current.clicks===null?'Nicht verfügbar':signed(current.clicks-previous.clicks)]] : []),
       ['Zitations-Nettoänderung',signed(previous.citations),signed(current.citations),current.citations===null||previous.citations===null?'Nicht verfügbar':signed(current.citations-previous.citations)]
     ]);
     const chart=el('monthly-chart');chart.replaceChildren();const max=Math.max(1,...rows.flatMap(r=>[r.visits,r.clicks]));
-    chart.append(node('p','Blau: Besuche · Grün: Publikationsaktionen. Fehlende Erfassung kann nicht als tatsächliche Null interpretiert werden.'));
-    for(const r of rows){const row=node('div');row.className='bar-row';row.append(node('span',r.month));const pair=node('div');pair.className='bar-pair';for(const [i,v]of[r.visits,r.clicks].entries()){const bar=node('span');bar.className=i?'bar secondary':'bar';bar.style.width=`${100*(v??0)/max}%`;pair.append(bar);}row.append(pair,node('span',`${r.visits??'–'} / ${r.clicks??'–'}`));chart.append(row);}
+    el('comparison').querySelector('h3').textContent = aggregate ? 'Seitenaufrufe nach Monat' : 'Besuche und Publikationsaktionen nach Monat';
+    chart.append(node('p',aggregate?'Blau: Seitenaufrufe. Fehlende Erfassung ist keine tatsächliche Null.':'Blau: Besuche · Grün: Publikationsaktionen. Fehlende Erfassung kann nicht als tatsächliche Null interpretiert werden.'));
+    for(const r of rows){const row=node('div');row.className='bar-row';row.append(node('span',r.month));const pair=node('div');pair.className='bar-pair';for(const [i,v]of(aggregate?[r.visits]:[r.visits,r.clicks]).entries()){const bar=node('span');bar.className=i?'bar secondary':'bar';bar.style.width=`${100*(v??0)/max}%`;pair.append(bar);}row.append(pair,node('span',aggregate?`${r.visits??'–'}`:`${r.visits??'–'} / ${r.clicks??'–'}`));chart.append(row);}
     const targets=['doi','fulltext','data','bibtex-copy','bibtex-download','other'];
     const grouped=data.publications.map(p=>{const counts=Object.fromEntries(targets.map(t=>[t,0]));for(const r of data.engagement.filter(r=>r.publication===p.citationKey)){const t=r.target;const group=t==='doi'?t:['publisher','igi','acm','ssrn','pdf','fulltext'].includes(t)?'fulltext':['zenodo','data','dataset'].includes(t)?'data':targets.includes(t)?t:'other';counts[group]+=Number(r.clicks);}return[p.title,...targets.map(t=>counts[t])];});
     table(el('interest-table'),['Publikation','DOI','Volltext / Verlag / Preprint','Datenpaket','BibTeX kopieren','BibTeX Download','Weitere Links'],grouped);

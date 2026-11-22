@@ -19,8 +19,9 @@
     return months(now).map(month => {
       const rows = data.monthly.filter(r => r.month === month);
       const changes = data.publications.map(p => citationMonths(data.snapshots,p.citationKey,[month])[0].delta);
-      const visitRows = rows.filter(r=>r.kind==='visit');
-      return {month, visits: month < startMonth && !visitRows.length ? null : visitRows.reduce((n,r)=>n+Number(r.count),0), clicks: month < startMonth ? null : rows.filter(r=>r.kind==='click').reduce((n,r)=>n+Number(r.count),0), citations: changes.length && changes.every(n=>n!==null) ? changes.reduce((a,b)=>a+b,0) : null};
+      const aggregate = data.mode === 'aggregate';
+      const visitRows = rows.filter(r=>r.kind===(aggregate?'pageview':'visit'));
+      return {month, visits: month < startMonth && !visitRows.length ? null : visitRows.reduce((n,r)=>n+Number(r.count),0), clicks: aggregate || month < startMonth ? null : rows.filter(r=>r.kind==='click').reduce((n,r)=>n+Number(r.count),0), citations: changes.length && changes.every(n=>n!==null) ? changes.reduce((a,b)=>a+b,0) : null};
     });
   }
   const api = {months,citationMonths,monthly};

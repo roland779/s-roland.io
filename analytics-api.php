@@ -27,9 +27,11 @@ try {
     $config = analyticsConfig();
     $action = $_GET['action'] ?? '';
     $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
-    if ($action === 'config' && $method === 'GET') respond(200, ['enabled' => true, 'fullIp' => !empty($config['full_ip'])]);
+    $mode = analyticsMode($config);
+    if ($action === 'config' && $method === 'GET') respond(200, ['enabled' => $mode === 'detailed', 'mode' => $mode, 'fullIp' => $mode === 'detailed' && !empty($config['full_ip'])]);
     if (($action === 'stats' && $method === 'GET') || ($action === 'refresh' && $method === 'POST')) requireAdmin($config);
     elseif (!in_array($action, ['visit','event','maintenance'], true) || $method !== 'POST') respond(404, []);
+    if ($mode !== 'detailed' && in_array($action, ['visit','event'], true)) respond(410, ['error' => 'Individual tracking disabled']);
     if ($method === 'POST') {
         $origin = parse_url($_SERVER['HTTP_ORIGIN'] ?? '');
         $authority = ($origin['host'] ?? '') . (isset($origin['port']) ? ':' . $origin['port'] : '');
@@ -50,6 +52,15 @@ try {
         $rows = $db->query('SELECT started, updated, path, referrer, ip, browser, seconds FROM visits ORDER BY started DESC LIMIT 1000')->fetchAll();
         $totals = $db->query('SELECT COUNT(*) visits, COALESCE(AVG(seconds),0) average, COALESCE(SUM(seconds),0) total FROM visits')->fetch();
         $payload = array_merge(['visits' => $rows, 'totals' => $totals, 'retentionDays' => 30, 'fullIp' => !empty($config['full_ip'])], researchStats($db));
+        $payload['mode'] = $mode;
+        if ($mode === 'aggregate') {
+            $payload['visits'] = []; $payload['engagement'] = []; $payload['conversion'] = []; $payload['reading'] = [];
+            $payload['totals'] = ['visits' => (int)$db->query('SELECT COALESCE(SUM(count),0) FROM pageviews_daily')->fetchColumn(), 'average' => null, 'total' => null];
+            $payload['daily'] = $db->query('SELECT day,count FROM pageviews_daily ORDER BY day')->fetchAll();
+            $payload['trackingStarted'] = (int)($db->query("SELECT value FROM meta WHERE key='aggregate_start'")->fetchColumn() ?: time());
+            $payload['fullIp'] = false;
+            $payload['monthly'] = array_values(array_filter($payload['monthly'], static fn($row) => $row['kind'] === 'pageview'));
+        }
         $db->commit();
         respond(200, $payload);
     }

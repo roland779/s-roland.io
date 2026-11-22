@@ -12,3 +12,6 @@ assert.equal(model.monthly(data,new Date('2025-12-25T00:00:00Z')).at(-1).citatio
 const fresh={...data,trackingStarted:Date.parse('2026-01-20T00:00:00Z')/1000};
 assert.equal(model.monthly(fresh,new Date('2026-01-25T00:00:00Z')).at(-2).visits,null,'Before collection is unavailable, not zero');
 console.log('Passed: calendar year boundary, last monthly snapshot, negative citation corrections, missing baselines, complete-source requirement and monthly aggregation.');
+const aggregate={...data,mode:'aggregate',monthly:[{month:'2026-01',kind:'visit',count:99},{month:'2026-01',kind:'pageview',count:3}]};
+const aggregateMonth=model.monthly(aggregate,new Date('2026-01-25T00:00:00Z')).at(-1);
+assert.equal(aggregateMonth.visits,3);assert.equal(aggregateMonth.clicks,null,'Aggregate mode must not show old visitor/click counts');

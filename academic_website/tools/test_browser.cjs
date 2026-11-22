@@ -1,13 +1,13 @@
-﻿const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),assert=require('node:assert/strict');
+const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),assert=require('node:assert/strict');
 const {spawn,spawnSync}=require('node:child_process');
 const php=process.env.PHP_BIN||'php';
 const browser=process.env.BROWSER_BIN||'C:/Program Files/Google/Chrome/Application/chrome.exe';
 const root=path.resolve(__dirname,'../..'),temp=fs.mkdtempSync(path.join(os.tmpdir(),'research-browser-'));
 const publicDir=path.join(temp,'public');fs.mkdirSync(publicDir);
-for(const f of ['admin.php','analytics-api.php','analytics-lib.php','index.html'])fs.copyFileSync(path.join(root,f),path.join(publicDir,f));
+for(const f of ['admin.php','analytics-api.php','analytics-lib.php','index.html','index.php'])fs.copyFileSync(path.join(root,f),path.join(publicDir,f));
 fs.cpSync(path.join(root,'academic_website'),path.join(publicDir,'academic_website'),{recursive:true});
 const password='browser-test-only-password';
-const config=spawnSync(php,[],{input:`<?php echo "<?php return ['password_hash'=>" . var_export(password_hash('${password}', PASSWORD_DEFAULT),true) . ", 'data_dir'=>__DIR__.'/../data', 'full_ip'=>false];";`,encoding:'utf8'});
+const config=spawnSync(php,[],{input:`<?php echo "<?php return ['password_hash'=>" . var_export(password_hash('${password}', PASSWORD_DEFAULT),true) . ", 'data_dir'=>__DIR__.'/../data', 'analytics_mode'=>'detailed', 'full_ip'=>false];";`,encoding:'utf8'});
 assert.equal(config.status,0,config.stderr);fs.writeFileSync(path.join(publicDir,'analytics-config.php'),config.stdout);
 const port=22000+Math.floor(Math.random()*4000),debugPort=port+5000,base=`http://127.0.0.1:${port}`;
 const server=spawn(php,['-S',`127.0.0.1:${port}`,'-t',publicDir],{stdio:'ignore'});
@@ -80,8 +80,21 @@ async function screenshot(name){if(!process.env.QA_DIR)return;await evaluate('ne
  await command('Network.setBlockedURLs',{urls:['https://*']});await command('Page.navigate',{url:base+'/'});await waitFor(`document.querySelectorAll('[data-publication]').length===4`);
  assert.equal(await evaluate(`document.querySelector('.analytics-consent')===null`),true,'Missing analytics configuration must not prevent the public profile from loading');
  assert.ok(await evaluate(`document.querySelector('#pubMeta').textContent.length>0`));
+ const aggregateConfig=fs.readFileSync(path.join(temp,'disabled-config.php'),'utf8').replace("'analytics_mode'=>'detailed'","'analytics_mode'=>'aggregate'");
+ fs.writeFileSync(path.join(publicDir,'analytics-config.php'),aggregateConfig);
+ const requestStart=requests.length;
+ await command('Page.navigate',{url:base+'/index.php'});await waitFor(`document.querySelectorAll('[data-publication]').length===4`);
+ assert.equal(await evaluate(`document.querySelector('.analytics-consent')===null&&document.querySelector('.analytics-settings')===null`),true,'Aggregate mode has no consent UI');
+ assert.equal(await evaluate(`!!document.querySelector('script[src$="/analytics.js"]')`),false,'Aggregate pages must not load the individual tracker');
+ assert.equal(requests.slice(requestStart).some(u=>u.includes('action=visit')||u.includes('action=event')||u.includes('fonts.googleapis.com')||u.includes('fonts.gstatic.com')),false,'No individual tracking or Google font requests');
+ stats=await(await fetch(base+'/analytics-api.php?action=stats',{headers:{Authorization:'Basic '+Buffer.from('admin:'+password).toString('base64')}})).json();assert.equal(stats.mode,'aggregate');assert.equal(stats.totals.visits,1);assert.equal(stats.visits.length,0);assert.equal(stats.engagement.length,0);assert.equal(stats.daily.length,1);
+ await fetch(base+'/index.php',{method:'HEAD'});await fetch(base+'/index.php',{headers:{DNT:'1'}});await fetch(base+'/index.php',{headers:{'Sec-GPC':'1'}});
+ stats=await(await fetch(base+'/analytics-api.php?action=stats',{headers:{Authorization:'Basic '+Buffer.from('admin:'+password).toString('base64')}})).json();assert.equal(stats.totals.visits,1,'HEAD and explicit privacy signals do not increase counts');
+ const denied=await fetch(base+'/analytics-api.php?action=visit',{method:'POST',headers:{Origin:base,'Content-Type':'application/json'},body:JSON.stringify({path:'/'})});assert.equal(denied.status,410,'Old tracker clients cannot start visits in aggregate mode');
+ await command('Page.navigate',{url:base+'/admin.php'});await waitFor(`document.querySelector('#count')?.textContent==='1'`);
+ assert.equal(await evaluate(`document.querySelector('#interest').hidden&&document.querySelector('#reading').hidden&&document.querySelector('#visitors').hidden`),true,'Unsupported individual metrics are hidden');
  assert.deepEqual(errors,[],'No uncaught browser exceptions');
- console.log('Passed in headless Chrome: dashboard rendering, safe citing titles, publication selection, Zenodo values, cached research/link controls, desktop/mobile layout, no recording before consent, publication click attribution, scroll depth/sections, withdrawal and actual publication/translation fetch failures.');
+ console.log('Passed in headless Chrome: dashboard, desktop/mobile, opt-in mode, withdrawal, failures, aggregate mode without prompt/tracker/fonts, PHP page counts, privacy signals, HEAD exclusion and disabled legacy tracking.');
 }finally{
  if(ws){try{await command('Browser.close');}catch(_){}ws.close();}
  if(chrome)chrome.kill();server.kill();

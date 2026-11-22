@@ -1,4 +1,4 @@
-﻿const assert = require('node:assert/strict');
+const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -17,7 +17,7 @@ fs.copyFileSync(path.join(root,'academic_website/tools/test_research.php'),path.
 const password = 'test-only-long-password';
 const hash = spawnSync(php,['-r', 'echo password_hash("test-only-long-password", PASSWORD_DEFAULT);'],{encoding:'utf8'});
 if (hash.status !== 0) throw Error(hash.stderr || 'PHP unavailable');
-fs.writeFileSync(path.join(publicDir,'analytics-config.php'), `<?php return ['password_hash'=>'${hash.stdout}', 'data_dir'=>__DIR__.'/../data', 'full_ip'=>false, 'automatic_refresh'=>false];`);
+fs.writeFileSync(path.join(publicDir,'analytics-config.php'), `<?php return ['password_hash'=>'${hash.stdout}', 'data_dir'=>__DIR__.'/../data', 'analytics_mode'=>'detailed', 'full_ip'=>false, 'automatic_refresh'=>false];`);
 const port = 18000 + Math.floor(Math.random()*10000);
 const base = `http://127.0.0.1:${port}`;
 const server = spawn(php,['-S',`127.0.0.1:${port}`,'-t',publicDir],{stdio:'ignore'});
@@ -72,11 +72,11 @@ async function post(data, origin=base) { return fetch(base+'/analytics-api.php?a
   `});assert.equal(expired.status,0,expired.stderr||expired.stdout);
   const retained=await(await fetch(base+'/analytics-api.php?action=stats',{headers:{Authorization:auth}})).json();
   assert.equal(retained.totals.visits,1);assert.ok(!retained.reading.some(r=>r.kind==='section'&&r.target==='research'),'Expired details are deleted');assert.equal(retained.monthly.filter(r=>r.kind==='visit').reduce((n,r)=>n+r.count,0),2,'Monthly aggregate survives detail expiration');
-  fs.writeFileSync(path.join(publicDir,'analytics-config.php'),`<?php return ['password_hash'=>'${hash.stdout}', 'data_dir'=>__DIR__.'/../data', 'full_ip'=>true, 'automatic_refresh'=>false];`);
+  fs.writeFileSync(path.join(publicDir,'analytics-config.php'),`<?php return ['password_hash'=>'${hash.stdout}', 'data_dir'=>__DIR__.'/../data', 'analytics_mode'=>'detailed', 'full_ip'=>true, 'automatic_refresh'=>false];`);
   assert.equal((await post({path:'/'})).status,200);
   const full=await(await fetch(base+'/analytics-api.php?action=stats',{headers:{Authorization:auth}})).json();assert.equal(full.fullIp,true);assert.equal(full.visits[0].ip,'127.0.0.1','Explicit full-IP setting is honored');
   assert.equal((await post({path:'/admin.php'})).status,400);
-  fs.writeFileSync(path.join(publicDir,'analytics-config.php'),`<?php return ['password_hash'=>'${hash.stdout}', 'data_dir'=>__DIR__.'/unsafe-public-data', 'full_ip'=>false, 'automatic_refresh'=>false];`);
+  fs.writeFileSync(path.join(publicDir,'analytics-config.php'),`<?php return ['password_hash'=>'${hash.stdout}', 'data_dir'=>__DIR__.'/unsafe-public-data', 'analytics_mode'=>'detailed', 'full_ip'=>false, 'automatic_refresh'=>false];`);
   assert.equal((await fetch(base+'/analytics-api.php?action=stats',{headers:{Authorization:auth}})).status,503,'Reject database storage in document root');
   console.log('Passed: authentication/HEAD/cache headers, CLI-only tools, origin checks, malformed payload rejection, SQLite persistence, masked/full IP, bounded duration, attribution, monthly aggregates, section/depth/errors, detail expiry and private storage enforcement.');
  } finally { server.kill(); await new Promise(r=>server.once('exit',r));fs.rmSync(temp,{recursive:true,force:true}); }
