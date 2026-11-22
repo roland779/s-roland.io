@@ -421,3 +421,5 @@ a{color:var(--accent)}
 .citation-actions .btn{font:inherit;font-size:.875rem;text-decoration:none}
 .citation-status{color:var(--muted);font-size:.875rem;margin:8px 0 0}
 .citation-status:empty{display:none}
+
+.analytics-consent{position:fixed;bottom:1rem;left:1rem;right:1rem;max-width:650px;margin:auto;padding:1.25rem;background:var(--bg,#fff);color:var(--text,#172334);border:1px solid #8795a6;border-radius:12px;box-shadow:0 8px 32px #0003;z-index:100}.analytics-consent button,.analytics-settings{font:inherit;padding:.6rem .9rem;margin:.25rem;border:1px solid #8795a6;border-radius:6px;cursor:pointer}.analytics-settings{font-size:.875rem}

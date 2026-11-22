@@ -1,0 +1,14 @@
+﻿const assert = require('node:assert/strict');
+const model = require('../js/admin-model.js');
+assert.deepEqual(model.months(new Date('2026-01-01T00:00:00Z'),3),['2025-11','2025-12','2026-01']);
+const snapshots=[{publication:'a',day:'2025-11-20',count:5},{publication:'a',day:'2025-12-01',count:7},{publication:'a',day:'2025-12-31',count:9},{publication:'a',day:'2026-01-20',count:8},{publication:'b',day:'2025-12-31',count:1},{publication:'b',day:'2026-01-20',count:3}];
+const rows=model.citationMonths(snapshots,'a',['2025-11','2025-12','2026-01','2026-02','2026-03']);
+assert.deepEqual(rows.map(r=>r.delta),[null,4,-1,null,null]);
+assert.equal(rows[1].count,9);
+const data={snapshots,publications:[{citationKey:'a'},{citationKey:'b'}],monthly:[{month:'2026-01',kind:'visit',count:3},{month:'2026-01',kind:'visit',count:2},{month:'2026-01',kind:'click',count:7}]};
+const current=model.monthly(data,new Date('2026-01-25T00:00:00Z')).at(-1);
+assert.deepEqual(current,{month:'2026-01',visits:5,clicks:7,citations:1});
+assert.equal(model.monthly(data,new Date('2025-12-25T00:00:00Z')).at(-1).citations,null,'Do not fabricate a total with missing baseline');
+const fresh={...data,trackingStarted:Date.parse('2026-01-20T00:00:00Z')/1000};
+assert.equal(model.monthly(fresh,new Date('2026-01-25T00:00:00Z')).at(-2).visits,null,'Before collection is unavailable, not zero');
+console.log('Passed: calendar year boundary, last monthly snapshot, negative citation corrections, missing baselines, complete-source requirement and monthly aggregation.');

@@ -4,3 +4,9 @@ Thumbs.db
 # Python test and utility caches
 __pycache__/
 *.py[cod]
+
+# Local analytics credentials and runtime storage
+analytics-config.php
+analytics-private/
+*.sqlite3
+*.sqlite3-*

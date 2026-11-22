@@ -45,6 +45,7 @@
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       dict = validateDictionary(await res.json());
     } catch (e) {
+      (window.__analyticsLoadFailures ||= []).push('i18n');
       // Fallback for file:// usage: read embedded JSON from index.html
       try {
         const el = document.getElementById("i18nData");

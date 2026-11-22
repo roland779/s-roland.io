@@ -83,13 +83,14 @@
 
       const el = document.createElement("article");
       el.className = "pub";
+      el.setAttribute?.('data-publication', p.citationKey || '');
       el.innerHTML = `
         <p class="pub-title">${title}${p.award ? `<span class="badge">${escapeHtml(p.award)}</span>` : ""}</p>
         <p class="pub-authors">${authors}</p>
         <p class="pub-venue"><em>${venue}</em></p>
         ${linkEntries.length ? `
           <div class="pub-links">
-            ${linkEntries.map(l => `<a href="${escapeHtml(l.url)}" target="_blank" rel="noopener">${escapeHtml(l.label)}</a>`).join("")}
+            ${linkEntries.map(l => `<a href="${escapeHtml(l.url)}" data-stat-target="${escapeHtml(l.label.toLowerCase())}" target="_blank" rel="noopener">${escapeHtml(l.label)}</a>`).join("")}
           </div>` : ""}
       `;
       if (typeof p.bibtex === "string" && p.bibtex.trim()) {
@@ -101,8 +102,8 @@
               <textarea readonly rows="12" spellcheck="false">${escapeHtml(p.bibtex)}</textarea>
             </label>
             <div class="citation-actions">
-              <button class="btn" type="button" data-copy-citation>${escapeHtml(citationText("copy"))}</button>
-              <a class="btn" download="${escapeHtml(filename)}" href="data:application/x-bibtex;charset=utf-8,${escapeHtml(encodeURIComponent(p.bibtex))}">${escapeHtml(citationText("download"))}</a>
+              <button class="btn" type="button" data-copy-citation data-stat-target="bibtex-copy">${escapeHtml(citationText("copy"))}</button>
+              <a class="btn" data-stat-target="bibtex-download" download="${escapeHtml(filename)}" href="data:application/x-bibtex;charset=utf-8,${escapeHtml(encodeURIComponent(p.bibtex))}">${escapeHtml(citationText("download"))}</a>
             </div>
             <p class="citation-status" role="status"></p>
           </details>`;
@@ -138,6 +139,7 @@
       const data = await res.json();
       setPubs(data);
     } catch (e) {
+      (window.__analyticsLoadFailures ||= []).push('publications');
       console.error("Could not load publications:", e);
       loadError = true;
       render();
