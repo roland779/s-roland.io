@@ -411,3 +411,13 @@ a{color:var(--accent)}
   .tagline{max-width:none}
 }
 @media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+
+/* Publication citation export */
+.citation{margin-top:12px}
+.citation summary{display:list-item;width:fit-content;cursor:pointer;color:var(--accent);font-weight:600;padding:6px 0}
+.citation-label{display:block;margin-top:10px;font-weight:600}
+.citation textarea{display:block;width:100%;max-width:100%;margin:6px 0 10px;padding:12px;border:1px solid var(--line);border-radius:8px;background:var(--soft);color:var(--ink);font: .875rem/1.5 ui-monospace,Consolas,monospace;resize:vertical}
+.citation-actions{display:flex;flex-wrap:wrap;gap:10px}
+.citation-actions .btn{font:inherit;font-size:.875rem;text-decoration:none}
+.citation-status{color:var(--muted);font-size:.875rem;margin:8px 0 0}
+.citation-status:empty{display:none}

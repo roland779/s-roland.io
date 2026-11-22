@@ -49,7 +49,13 @@
     "aria.publications": "List of publications",
     "aria.light": "Light mode",
     "aria.dark": "Dark mode",
-    "aria.german": "German"
+    "aria.german": "German",
+    "pub.cite.cite": "Cite",
+    "pub.cite.label": "BibTeX citation",
+    "pub.cite.copy": "Copy BibTeX",
+    "pub.cite.download": "Download .bib",
+    "pub.cite.copied": "BibTeX copied.",
+    "pub.cite.manual": "Automatic copying is unavailable. The text is selected; copy it manually or download the .bib file."
   },
   "de": {
     "skip": "Zum Inhalt springen",
@@ -101,6 +107,12 @@
     "aria.publications": "Publikationsliste",
     "aria.light": "Helle Darstellung",
     "aria.dark": "Dunkle Darstellung",
-    "aria.german": "Deutsch"
+    "aria.german": "Deutsch",
+    "pub.cite.cite": "Zitieren",
+    "pub.cite.label": "BibTeX-Literaturverweis",
+    "pub.cite.copy": "BibTeX kopieren",
+    "pub.cite.download": ".bib herunterladen",
+    "pub.cite.copied": "BibTeX kopiert.",
+    "pub.cite.manual": "Automatisches Kopieren ist nicht verfügbar. Der Text ist markiert; bitte manuell kopieren oder die .bib-Datei herunterladen."
   }
 }

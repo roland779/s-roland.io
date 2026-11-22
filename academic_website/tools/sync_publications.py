@@ -95,8 +95,9 @@ def merge_existing(existing, generated):
         if k in by_title:
             matched.add(k)
             e = by_title[k]
-            if "selected" in e:
-                g["selected"] = e["selected"]
+            for field in ("selected", "bibtex", "citationKey"):
+                if field in e:
+                    g[field] = e[field]
             g["award"] = e.get("award", g["award"]) or g["award"]
             # merge links (keep existing if not '#')
             links = dict(g.get("links", {}))

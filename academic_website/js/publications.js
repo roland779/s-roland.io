@@ -16,6 +16,35 @@
     }[m]));
   }
 
+  function citationText(key) {
+    const lang = typeof window.__getLang === "function" ? window.__getLang() : "en";
+    const dict = typeof window.__getI18n === "function" ? window.__getI18n() : null;
+    const fallback = {
+      cite: ["Cite", "Zitieren"], label: ["BibTeX citation", "BibTeX-Literaturverweis"],
+      copy: ["Copy BibTeX", "BibTeX kopieren"], download: ["Download .bib", ".bib herunterladen"],
+      copied: ["BibTeX copied.", "BibTeX kopiert."],
+      manual: ["Automatic copying is unavailable. The text is selected; copy it manually or download the .bib file.", "Automatisches Kopieren ist nicht verfügbar. Der Text ist markiert; bitte manuell kopieren oder die .bib-Datei herunterladen."]
+    };
+    return (dict && dict[lang] && dict[lang]["pub.cite." + key]) || fallback[key][lang === "de" ? 1 : 0];
+  }
+
+  pubList.addEventListener("click", async event => {
+    const button = event.target.closest("[data-copy-citation]");
+    if (!button) return;
+    const panel = button.closest(".citation");
+    const text = panel.querySelector("textarea");
+    const status = panel.querySelector("[role=status]");
+    try {
+      if (!navigator.clipboard || !navigator.clipboard.writeText) throw new Error("Clipboard unavailable");
+      await navigator.clipboard.writeText(text.value);
+      status.textContent = citationText("copied");
+    } catch (_) {
+      text.focus();
+      text.select();
+      status.textContent = citationText("manual");
+    }
+  });
+
   function parseYear(p) {
     const venue = (p && p.venue) ? String(p.venue) : "";
     const m = venue.match(/(19|20)\d{2}/);
@@ -63,6 +92,21 @@
             ${linkEntries.map(l => `<a href="${escapeHtml(l.url)}" target="_blank" rel="noopener">${escapeHtml(l.label)}</a>`).join("")}
           </div>` : ""}
       `;
+      if (typeof p.bibtex === "string" && p.bibtex.trim()) {
+        const filename = String(p.citationKey || "citation").replace(/[^a-zA-Z0-9_-]/g, "_") + ".bib";
+        el.innerHTML += `
+          <details class="citation">
+            <summary>${escapeHtml(citationText("cite"))}</summary>
+            <label class="citation-label">${escapeHtml(citationText("label"))}
+              <textarea readonly rows="12" spellcheck="false">${escapeHtml(p.bibtex)}</textarea>
+            </label>
+            <div class="citation-actions">
+              <button class="btn" type="button" data-copy-citation>${escapeHtml(citationText("copy"))}</button>
+              <a class="btn" download="${escapeHtml(filename)}" href="data:application/x-bibtex;charset=utf-8,${escapeHtml(encodeURIComponent(p.bibtex))}">${escapeHtml(citationText("download"))}</a>
+            </div>
+            <p class="citation-status" role="status"></p>
+          </details>`;
+      }
       pubList.appendChild(el);
     });
   }

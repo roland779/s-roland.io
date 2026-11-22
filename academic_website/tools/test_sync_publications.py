@@ -16,7 +16,7 @@ class SyncPublicationsTests(unittest.TestCase):
     def test_merge_preserves_matching_and_unmatched_publications(self):
         existing = [
             {"title": "Matched", "authors": ["Author"], "venue": "Journal", "selected": False,
-             "award": "Award", "links": {"doi": "https://example.com/doi"}},
+             "award": "Award", "bibtex": "@article{Matched}", "citationKey": "Matched", "links": {"doi": "https://example.com/doi"}},
             {"title": "Manual", "authors": ["Other"], "venue": "Journal", "links": {}},
         ]
         generated = [
@@ -32,6 +32,8 @@ class SyncPublicationsTests(unittest.TestCase):
         self.assertEqual(result[0]["authors"], ["Author"])
         self.assertEqual(result[0]["venue"], "Journal")
         self.assertEqual(result[0]["award"], "Award")
+        self.assertEqual(result[0]["bibtex"], "@article{Matched}")
+        self.assertEqual(result[0]["citationKey"], "Matched")
         self.assertEqual(set(result[0]["links"]), {"doi", "ssrn"})
         self.assertNotIn("selected", generated[0])
 

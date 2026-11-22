@@ -5,6 +5,14 @@ const root=require('node:path').resolve(__dirname,'../..');
 const read=p=>fs.readFileSync(require('node:path').join(root,p),'utf8');
 const translations=JSON.parse(read('academic_website/data/i18n.json'));
 const html=read('index.html');
+const publications=JSON.parse(read('academic_website/data/publications.json')).publications;
+const citationKeys=new Set();
+for(const publication of publications.filter(p=>p.bibtex)) {
+  assert.ok(!citationKeys.has(publication.citationKey),'duplicate citation key');
+  citationKeys.add(publication.citationKey);
+  assert.ok(publication.bibtex.startsWith('@article{'+publication.citationKey+','));
+  assert.ok(publication.bibtex.includes(publication.links.doi.replace('https://doi.org/','')));
+}
 for(const [id,file] of [['i18nData','i18n.json'],['pubData','publications.json']]) {
   const match=html.match(new RegExp(`<script id="${id}" type="application/json">([\\s\\S]*?)</script>`));
   assert.ok(match, id);
@@ -64,8 +72,8 @@ async function checkTranslationValidation() {
   }
 }
 async function checkPublications() {
-  const elements={pubList:{innerHTML:'',children:[],appendChild(child){this.children.push(child);}},pubMeta:{}};
-  const data={publications:[{title:'Old',venue:'Journal (2020)',links:{bad:'javascript:alert(1)',doi:'https://example.org'}},{title:'New',venue:'Journal (2026)'},{title:'Hidden',selected:false}]};
+  const elements={pubList:{addEventListener(){},innerHTML:'',children:[],appendChild(child){this.children.push(child);}},pubMeta:{}};
+  const data={publications:[{title:'Old',venue:'Journal (2020)',bibtex:'@article{Old2020, title = {Safe </textarea><script>alert(1)</script>}}',citationKey:'Old2020',links:{bad:'javascript:alert(1)',doi:'https://example.org'}},{title:'New',venue:'Journal (2026)'},{title:'Hidden',selected:false}]};
   const context={URL,document:{getElementById:id=>elements[id],createElement:()=>({})},window:{location:{protocol:'https:'},addEventListener(){},__getLang:()=> 'de',__getI18n:()=>translations},fetch:async()=>({ok:true,json:async()=>data}),console};
   vm.runInNewContext(read('academic_website/js/publications.js'),context);
   await new Promise(resolve=>setImmediate(resolve));
@@ -74,12 +82,16 @@ async function checkPublications() {
   assert.doesNotMatch(elements.pubList.children[1].innerHTML,/javascript:/);
   assert.ok(elements.pubList.children[1].innerHTML.includes('href="https://example.org"'));
   assert.match(elements.pubMeta.textContent,/Anzeige/);
+  assert.match(elements.pubList.children[1].innerHTML,/class="citation"/);
+  assert.match(elements.pubList.children[1].innerHTML,/download="Old2020.bib"/);
+  assert.match(elements.pubList.children[1].innerHTML,/BibTeX kopieren/);
+  assert.doesNotMatch(elements.pubList.children[1].innerHTML,/<script>/);
 }
 async function checkPublicationFailuresAndFileMode() {
   for (const mode of ['http-error','invalid-data','file']) {
     let fetched=false;
     let errorCount=0;
-    const list={children:[],innerHTML:'',appendChild(item){this.children.push(item);}};
+    const list={addEventListener(){},children:[],innerHTML:'',appendChild(item){this.children.push(item);}};
     const meta={};
     const context={URL,console:{error(){errorCount++;}},
       document:{getElementById:id=>id==='pubList'?list:id==='pubMeta'?meta:{textContent:JSON.stringify({publications:[{title:'Embedded',venue:'2024'}]})},createElement:()=>({})},

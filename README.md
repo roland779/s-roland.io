@@ -30,6 +30,10 @@ Use the EN/DE buttons in the header to switch languages. The selection is stored
 ## Publications
 Publications are loaded from `academic_website/data/publications.json`.
 
+### BibTeX citations
+
+Each publication with a `bibtex` entry provides a Cite/Zitieren panel with copy and `.bib` download actions. The `citationKey` determines the download filename. Citation metadata was checked against the DOI records at Crossref. Maintain these fields alongside the publication data and run the embedded-data sync after edits. The `--merge` import preserves both citation fields.
+
 ### Syncing publications (semi-automatic)
 This repository includes a helper script to semi-automatically generate or update `publications.json` from an external author page (for example SSRN). External services often employ CORS or bot protection; the script runs locally and scrapes the provided URL.
 

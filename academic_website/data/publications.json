@@ -2,7 +2,10 @@
   "publications": [
     {
       "title": "Inter-Organizational Collaborations in Open-Source Software Ecosystems",
-      "authors": ["Roland Robert Schreiber", "Thomas Wieland"],
+      "authors": [
+        "Roland Robert Schreiber",
+        "Thomas Wieland"
+      ],
       "venue": "Journal of Systems and Software, 112765 (2026)",
       "award": "",
       "links": {
@@ -10,11 +13,16 @@
         "ssrn": "https://ssrn.com/abstract=5097590",
         "zenodo": "https://doi.org/10.5281/zenodo.18086905",
         "orcid": "https://orcid.org/0009-0000-7756-4507"
-      }
+      },
+      "citationKey": "SchreiberWieland2026",
+      "bibtex": "@article{SchreiberWieland2026,\n  author = {Schreiber, Roland Robert and Wieland, Thomas},\n  title = {{Inter-organizational collaborations in open-source software ecosystems}},\n  journal = {Journal of Systems and Software},\n  year = {2026},\n  volume = {235},\n  pages = {112765},\n  doi = {10.1016/j.jss.2025.112765},\n  url = {https://doi.org/10.1016/j.jss.2025.112765}\n}\n"
     },
     {
       "title": "Social Network Analysis in Software Development Projects: A Systematic Literature Review",
-      "authors": ["Roland Robert Schreiber", "Matthäus Paul Zylka"],
+      "authors": [
+        "Roland Robert Schreiber",
+        "Matthäus Paul Zylka"
+      ],
       "venue": "International Journal of Software Engineering and Knowledge Engineering 30(03), 321–362 (2020)",
       "award": "",
       "links": {
@@ -22,22 +30,30 @@
         "publisher": "https://www.worldscientific.com/doi/abs/10.1142/S021819402050014X",
         "dblp": "https://dblp.org/rec/journals/ijseke/SchreiberZ20",
         "orcid": "https://orcid.org/0009-0000-7756-4507"
-      }
+      },
+      "citationKey": "SchreiberZylka2020",
+      "bibtex": "@article{SchreiberZylka2020,\n  author = {Schreiber, Roland Robert and Zylka, Matth{\\\"a}us Paul},\n  title = {{Social Network Analysis in Software Development Projects: A Systematic Literature Review}},\n  journal = {International Journal of Software Engineering and Knowledge Engineering},\n  year = {2020},\n  volume = {30},\n  number = {03},\n  pages = {321--362},\n  doi = {10.1142/S021819402050014X},\n  url = {https://doi.org/10.1142/S021819402050014X}\n}\n"
     },
     {
       "title": "Organizational Influencers in Open-Source Software Projects",
-      "authors": ["Roland Robert Schreiber"],
+      "authors": [
+        "Roland Robert Schreiber"
+      ],
       "venue": "International Journal of Open Source Software and Processes 14(1), 1–20 (February 2023)",
       "award": "",
       "links": {
         "doi": "https://doi.org/10.4018/IJOSSP.318400",
         "acm": "https://dl.acm.org/doi/10.4018/IJOSSP.318400",
         "orcid": "https://orcid.org/0009-0000-7756-4507"
-      }
+      },
+      "citationKey": "Schreiber2023",
+      "bibtex": "@article{Schreiber2023,\n  author = {Schreiber, Roland Robert},\n  title = {{Organizational Influencers in Open-Source Software Projects}},\n  journal = {International Journal of Open Source Software and Processes},\n  year = {2023},\n  volume = {14},\n  number = {1},\n  pages = {1--20},\n  doi = {10.4018/IJOSSP.318400},\n  url = {https://doi.org/10.4018/IJOSSP.318400}\n}\n"
     },
     {
       "title": "Organizational Influence on Security Development in Open-Source Software Projects",
-      "authors": ["Roland Robert Schreiber"],
+      "authors": [
+        "Roland Robert Schreiber"
+      ],
       "venue": "International Journal of Systems and Software Security and Protection 15(1), 1–20 (October 2024)",
       "award": "",
       "links": {
@@ -45,7 +61,9 @@
         "igi": "https://www.igi-global.com/article/organizational-influence-on-security-development-in-open-source-software-projects/356659",
         "dblp": "https://dblp.org/rec/journals/ijsssp/Schreiber24",
         "orcid": "https://orcid.org/0009-0000-7756-4507"
-      }
+      },
+      "citationKey": "Schreiber2024",
+      "bibtex": "@article{Schreiber2024,\n  author = {Schreiber, Roland Robert},\n  title = {{Organizational Influence on Security Development in Open-Source Software Projects}},\n  journal = {International Journal of Systems and Software Security and Protection},\n  year = {2024},\n  volume = {15},\n  number = {1},\n  pages = {1--20},\n  doi = {10.4018/IJSSSP.356659},\n  url = {https://doi.org/10.4018/IJSSSP.356659}\n}\n"
     }
   ]
 }
