@@ -9,9 +9,9 @@ Why a local script?
 - A small local sync step keeps the website static while still letting you "automate" updates.
 
 Usage (from project root):
-  python tools/sync_publications.py --ssrn "https://papers.ssrn.com/sol3/cf_dev/AbsByAuth.cfm?per_id=7334206" --out data/publications.json
+  python academic_website/tools/sync_publications.py --ssrn "https://papers.ssrn.com/sol3/cf_dev/AbsByAuth.cfm?per_id=7334206" --out academic_website/data/publications.json
 
-Optional: add --merge to keep existing manual fields (e.g., selected, award).
+Optional: add --merge to keep existing publications and manual fields.
 
 Requirements:
   pip install requests beautifulsoup4
@@ -26,15 +26,15 @@ import json
 import re
 from urllib.parse import urljoin
 
-import requests
-from bs4 import BeautifulSoup
-
 
 def normalize_whitespace(s: str) -> str:
     return re.sub(r"\s+", " ", (s or "")).strip()
 
 
 def parse_ssrn_author_page(url: str):
+    import requests
+    from bs4 import BeautifulSoup
+
     r = requests.get(url, timeout=30, headers={"User-Agent": "Mozilla/5.0"})
     r.raise_for_status()
     soup = BeautifulSoup(r.text, "html.parser")
@@ -52,11 +52,12 @@ def parse_ssrn_author_page(url: str):
         abs_url = urljoin(url, href)
         if abs_url in seen:
             continue
-        seen.add(abs_url)
 
         title = normalize_whitespace(a.get_text(" ", strip=True))
         if not title or len(title) < 6:
             continue
+
+        seen.add(abs_url)
 
         # Attempt to infer year from nearby text
         year = ""
@@ -85,14 +86,17 @@ def parse_ssrn_author_page(url: str):
 
 
 def merge_existing(existing, generated):
-    # Preserve selected/award and any non-empty links from existing
     by_title = { (p.get("title","").lower()): p for p in existing }
     out = []
+    matched = set()
     for g in generated:
+        g = dict(g)
         k = g.get("title","").lower()
         if k in by_title:
+            matched.add(k)
             e = by_title[k]
-            g["selected"] = bool(e.get("selected", g["selected"]))
+            if "selected" in e:
+                g["selected"] = e["selected"]
             g["award"] = e.get("award", g["award"]) or g["award"]
             # merge links (keep existing if not '#')
             links = dict(g.get("links", {}))
@@ -105,17 +109,20 @@ def merge_existing(existing, generated):
             if e.get("venue") and e["venue"] != "SSRN":
                 g["venue"] = e["venue"]
         out.append(g)
+    out.extend(p for p in existing if p.get("title", "").lower() not in matched)
     return out
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--ssrn", required=True, help="SSRN author page URL")
-    ap.add_argument("--out", default="data/publications.json", help="Output JSON path")
+    ap.add_argument("--out", default="academic_website/data/publications.json", help="Output JSON path")
     ap.add_argument("--merge", action="store_true", help="Merge with existing output file")
     args = ap.parse_args()
 
     generated = parse_ssrn_author_page(args.ssrn)
+    if not generated:
+        ap.exit(1, "No publications found on the SSRN author page; output file was not changed.\n")
 
     payload = {"publications": generated}
 

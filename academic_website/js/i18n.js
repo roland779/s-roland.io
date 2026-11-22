@@ -4,11 +4,21 @@
 (function () {
   const STORE_KEY = "rrs_lang";
   let dict = null;
-  let lang = (localStorage.getItem(STORE_KEY) || (navigator.language || "en")).toLowerCase().startsWith("de") ? "de" : "en";
+  let savedLang = null;
+  try { savedLang = localStorage.getItem(STORE_KEY); } catch (_) {}
+  let lang = (savedLang || (navigator.language || "en")).toLowerCase().startsWith("de") ? "de" : "en";
+
+  function validateDictionary(value) {
+    if (!value || !["en", "de"].every(key =>
+      value[key] && typeof value[key] === "object" && !Array.isArray(value[key])
+    )) throw new Error("Invalid translation data");
+    return value;
+  }
 
   function applyTranslations() {
     if (!dict) return;
     const map = dict[lang] || dict.en;
+    document.documentElement.lang = lang;
 
     document.querySelectorAll("[data-i18n]").forEach(el => {
       const key = el.getAttribute("data-i18n");
@@ -18,20 +28,10 @@
       }
     });
 
-    // Footer last updated (if present)
-    const last = document.getElementById("lastUpdated");
-    if (last && map["footer.last_updated"]) {
-      const d = new Date();
-      const opts = { year: "numeric", month: "long" };
-      const ds = d.toLocaleDateString(undefined, opts);
-      last.textContent = map["footer.last_updated"].replace("{d}", ds);
-    }
-
-    // Toggle button label (pubs.js will override after it loads; this sets initial state)
-    const pubToggle = document.getElementById("pubToggle");
-    if (pubToggle) {
-      pubToggle.textContent = map["pub.toggle.show_all"] || pubToggle.textContent;
-    }
+    document.querySelectorAll("[data-i18n-aria]").forEach(el => {
+      const value = map[el.getAttribute("data-i18n-aria")];
+      if (typeof value === "string") el.setAttribute("aria-label", value);
+    });
 
     // Update active lang button
     document.querySelectorAll("[data-lang]").forEach(b => {
@@ -42,13 +42,14 @@
   async function init() {
     try {
       const res = await fetch("academic_website/data/i18n.json", { cache: "no-store" });
-      dict = await res.json();
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      dict = validateDictionary(await res.json());
     } catch (e) {
       // Fallback for file:// usage: read embedded JSON from index.html
       try {
         const el = document.getElementById("i18nData");
         if (el && el.textContent) {
-          dict = JSON.parse((el.textContent || "").trim());
+          dict = validateDictionary(JSON.parse((el.textContent || "").trim()));
         } else {
           dict = null;
         }
@@ -59,13 +60,14 @@
     }
 
     applyTranslations();
+    window.dispatchEvent(new CustomEvent("langchange", { detail: { lang } }));
 
     document.querySelectorAll("[data-lang]").forEach(btn => {
       btn.addEventListener("click", () => {
         const next = btn.getAttribute("data-lang");
-        if (!next) return;
+        if (next !== "en" && next !== "de") return;
         lang = next;
-        localStorage.setItem(STORE_KEY, lang);
+        try { localStorage.setItem(STORE_KEY, lang); } catch (_) {}
         applyTranslations();
 
         // Let publications module re-render with localized strings if available

@@ -1,2 +1,6 @@
 .DS_Store
 Thumbs.db
+
+# Python test and utility caches
+__pycache__/
+*.py[cod]
