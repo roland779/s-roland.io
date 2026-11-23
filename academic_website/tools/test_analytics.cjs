@@ -57,6 +57,14 @@ async function post(data, origin=base) { return fetch(base+'/analytics-api.php?a
   assert.equal(stats.totals.visits,1);assert.equal(stats.visits[0].referrer,'example.org');assert.equal(stats.visits[0].ip,'127.0.0.0/24');assert.ok(stats.visits[0].seconds < 2);
   assert.equal(stats.engagement.length,2);assert.equal(stats.conversion[0].engaged,1);assert.equal(stats.conversion[0].clicks,2);assert.equal(stats.reading.find(r=>r.kind==='section').visits,1);
   assert.equal(stats.monthly.filter(r=>r.kind==='click').reduce((n,r)=>n+r.count,0),2);
+  for(const privacy of [{DNT:'1'},{'Sec-GPC':'1'}]){
+    for(const [action,body]of [['visit',{path:'/'}],['visit',{id,seconds:5}],['event',{id,kind:'click',publication:'SchreiberZylka2020',target:'doi'}]]){
+      const blocked=await fetch(base+'/analytics-api.php?action='+action,{method:'POST',headers:{Origin:base,'Content-Type':'application/json',...privacy},body:JSON.stringify(body)});
+      assert.equal(blocked.status,403,'Server must honor DNT/GPC even for direct or outdated tracker requests');
+    }
+  }
+  const privateStats=await(await fetch(base+'/analytics-api.php?action=stats',{headers:{Authorization:auth}})).json();
+  assert.equal(privateStats.totals.visits,1);assert.equal(privateStats.engagement.reduce((n,r)=>n+r.clicks,0),2,'Privacy signals cannot inflate statistics');
   const apiRefresh=await fetch(base+'/analytics-api.php?action=refresh',{method:'POST',headers:{Authorization:auth,Origin:'https://other.example','Content-Type':'application/json'},body:JSON.stringify({publication:'SchreiberZylka2020',kind:'citations'})});assert.equal(apiRefresh.status,403);
   const invalidRefresh=await fetch(base+'/analytics-api.php?action=refresh',{method:'POST',headers:{Authorization:auth,Origin:base,'Content-Type':'application/json'},body:JSON.stringify({publication:'forged',kind:'citations'})});assert.equal(invalidRefresh.status,400);
   assert.equal((await post({id:'a'.repeat(64),seconds:1})).status,404);

@@ -44,6 +44,10 @@ try {
         if (!$decoded instanceof stdClass) respond(400, []);
         $input = (array)$decoded;
     }
+    if (in_array($action, ['visit','event'], true)
+        && (($_SERVER['HTTP_DNT'] ?? '') === '1' || ($_SERVER['HTTP_SEC_GPC'] ?? '') === '1')) {
+        respond(403, ['error' => 'Individual tracking disabled by privacy signal']);
+    }
     $store = analyticsStorage($config);
     if ($action === 'maintenance') respond(200, maintenanceStep($store, $config));
     if ($action === 'stats') respond(200, analyticsStats($store, $config));

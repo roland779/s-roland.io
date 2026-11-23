@@ -19,12 +19,17 @@ function command(method,params={}){return new Promise((resolve,reject)=>{const i
 async function evaluate(expression){const r=await command('Runtime.evaluate',{expression,returnByValue:true,awaitPromise:true});if(r.exceptionDetails)throw Error(r.exceptionDetails.text+' '+JSON.stringify(r.exceptionDetails.exception));return r.result?.value;}
 async function waitFor(expression){return retry(async()=>await evaluate(expression));}
 async function screenshot(name){if(!process.env.QA_DIR)return;await evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');fs.mkdirSync(process.env.QA_DIR,{recursive:true});const r=await command('Page.captureScreenshot',{format:'png',captureBeyondViewport:false});fs.writeFileSync(path.join(process.env.QA_DIR,name+'.png'),Buffer.from(r.data,'base64'));}
+async function accessibility(){if(!process.env.AXE_PATH)return;await evaluate(fs.readFileSync(process.env.AXE_PATH,'utf8'));const violations=await evaluate(`(async()=>{const r=await axe.run(document,{runOnly:{type:'tag',values:['wcag2a','wcag2aa','wcag21aa']}});return r.violations.map(v=>({id:v.id,nodes:v.nodes.map(n=>n.target)}));})()`);assert.deepEqual(violations,[],'Dashboard accessibility');}
 (async()=>{try{
  await retry(async()=>(await fetch(base+'/analytics-api.php?action=config')).ok);
  // Seed public research metadata only, using an isolated private database.
  const seed=spawnSync(php,[],{encoding:'utf8',env:{...process.env,ANALYTICS_TEST_ROOT:publicDir},input:`<?php
  require getenv('ANALYTICS_TEST_ROOT').'/analytics-lib.php';$config=require getenv('ANALYTICS_TEST_ROOT').'/analytics-config.php';$db=analyticsStorage($config);
  $db->update(static function(array &$t): void {
+ // Retained monthly pageviews older than the daily window, for the aggregate chart.
+ $start=(new DateTimeImmutable('first day of this month',new DateTimeZone('UTC')))->modify('-5 months');
+ AnalyticsCsvStore::put($t,'meta',['key'=>'aggregate_start','value'=>(string)$start->getTimestamp()]);
+ foreach([8,14,11,20,27] as $i=>$count)for($j=0;$j<$count;$j++)incrementMonth($t,'pageview','','','',$start->modify('+'.$i.' months')->getTimestamp());
  foreach(publications() as $id=>$pub){
   $payload=['source'=>'OpenAlex','url'=>'https://openalex.org/W123','count'=>3,'listedTotal'=>1,'partial'=>false,'citing'=>[['title'=>'Citing <script>window.bad=true</script> work','year'=>2026,'doi'=>'https://doi.org/10.example/test','url'=>'https://openalex.org/W999']]];
   AnalyticsCsvStore::put($t,'external',['publication'=>$id,'kind'=>'citations','payload'=>$payload,'checked'=>time(),'success'=>time(),'error'=>null]);
@@ -45,6 +50,12 @@ async function screenshot(name){if(!process.env.QA_DIR)return;await evaluate('ne
  await command('Page.navigate',{url:base+'/admin.php'});await waitFor(`document.querySelector('#citation-total')?.textContent==='12'`);
  await evaluate(`document.documentElement.style.scrollBehavior='auto'`);
  assert.equal(await evaluate(`document.querySelector('#count').textContent`),'0');
+ assert.equal(await evaluate(`document.querySelector('#zenodo-downloads').textContent`),'5');
+ assert.equal(await evaluate(`document.querySelector('#zenodo-views').textContent`),'61');
+ assert.equal(await evaluate(`document.querySelectorAll('.source-card').length`),9,'One status card per publication/source');
+ assert.ok(await evaluate(`document.querySelector('#chart-message').textContent.includes('Noch keine Daten erfasst')`),'No fabricated monthly history on first snapshot');
+ await evaluate(`document.querySelector('[data-source-kind="citations"]').click()`);
+ await waitFor(`document.querySelector('#source-status').textContent.includes('Gespeicherter Stand verwendet')`);
  assert.ok(requests.some(url=>url.includes('action=maintenance')),'Admin page triggers automatic maintenance');
  assert.equal(await evaluate(`window.bad===true`),false,'External titles must render as text');
  assert.ok(await evaluate(`document.querySelector('#citations-content').textContent.includes('<script>window.bad=true</script>')`));
@@ -55,6 +66,16 @@ async function screenshot(name){if(!process.env.QA_DIR)return;await evaluate('ne
  assert.ok(await evaluate(`document.querySelector('#sync-status').textContent.includes('0 Fehler')`));
  await evaluate(`document.querySelector('#check-links').click()`);await waitFor(`document.querySelector('#link-status').textContent.includes('Abruf abgeschlossen')`);
  await command('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:true});await evaluate('window.scrollTo(0,0)');await screenshot('admin-mobile');
+ await evaluate(`document.querySelector('#menu-toggle').click()`);
+ assert.equal(await evaluate(`document.querySelector('#menu-toggle').getAttribute('aria-expanded')`),'true');
+ await command('Input.dispatchKeyEvent',{type:'keyDown',key:'Escape',code:'Escape'});
+ assert.equal(await evaluate(`document.querySelector('#menu-toggle').getAttribute('aria-expanded')`),'false');
+ assert.equal(await evaluate(`document.activeElement.id`),'menu-toggle');
+ await evaluate(`document.querySelector('#menu-toggle').click();document.querySelector('.admin-nav a[href="#sources"]').click()`);
+ assert.equal(await evaluate(`document.querySelector('#menu-toggle').getAttribute('aria-expanded')`),'false');
+ assert.equal(await evaluate(`document.activeElement.id`),'sources');
+ for(const width of[320,375,768,1024]){await command('Emulation.setDeviceMetricsOverride',{width,height:844,deviceScaleFactor:1,mobile:width<800});assert.equal(await evaluate(`document.documentElement.scrollWidth<=innerWidth`),true,'Dashboard fits width '+width);}
+ await command('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:true});
  for(const section of ['comparison','interest','impact','datasets','reading','health','visitors']){
   await evaluate(`document.querySelector('#${section}').scrollIntoView()`);
   assert.equal(await evaluate(`document.documentElement.scrollWidth<=window.innerWidth`),true,'Mobile section must fit viewport: '+section);
@@ -96,11 +117,63 @@ async function screenshot(name){if(!process.env.QA_DIR)return;await evaluate('ne
  stats=await(await fetch(base+'/analytics-api.php?action=stats',{headers:{Authorization:'Basic '+Buffer.from('admin:'+password).toString('base64')}})).json();assert.equal(stats.totals.visits,1,'HEAD and explicit privacy signals do not increase counts');
  const denied=await fetch(base+'/analytics-api.php?action=visit',{method:'POST',headers:{Origin:base,'Content-Type':'application/json'},body:JSON.stringify({path:'/'})});assert.equal(denied.status,410,'Old tracker clients cannot start visits in aggregate mode');
  await command('Page.navigate',{url:base+'/admin.php'});await waitFor(`document.querySelector('#count')?.textContent==='1'`);
+ await waitFor(`!!Chart.getChart('monthly-canvas')`);
+ assert.equal(await evaluate(`Chart.getChart('monthly-canvas').data.labels.length`),12);
+ await evaluate(`document.querySelector('#chart-range').value='6';document.querySelector('#chart-range').dispatchEvent(new Event('change'))`);
+ assert.equal(await evaluate(`Chart.getChart('monthly-canvas').data.labels.length`),6,'Range filter updates the actual chart');
+ assert.equal(await evaluate(`Chart.getChart('monthly-canvas').data.datasets[0].data.at(-1)`),1);
+ assert.equal(await evaluate(`Chart.getChart('monthly-canvas').data.datasets.at(-1).data.at(-1)`),null,'Missing citation baseline stays null');
+ await evaluate(`document.querySelector('#comparison').scrollIntoView()`);
+ await new Promise(r=>setTimeout(r,400));
+ async function clickLegend(){const point=await evaluate(`(()=>{const chart=Chart.getChart('monthly-canvas'),hit=chart.legend.legendHitBoxes[0],rect=chart.canvas.getBoundingClientRect();return{x:rect.left+hit.left+hit.width/2,y:rect.top+hit.top+hit.height/2};})()`);await command('Input.dispatchMouseEvent',{type:'mouseMoved',...point});for(const type of['mousePressed','mouseReleased'])await command('Input.dispatchMouseEvent',{type,...point,button:'left',clickCount:1});}
+ await clickLegend();
+ await waitFor(`!Chart.getChart('monthly-canvas').isDatasetVisible(0)`);
+ await clickLegend();
+ await waitFor(`Chart.getChart('monthly-canvas').isDatasetVisible(0)`);await evaluate(`Chart.getChart('monthly-canvas').stop();Chart.getChart('monthly-canvas').update('none')`);
+ await screenshot('admin-aggregate-chart');
+ await accessibility();
+ await evaluate(`window.scrollTo(0,0)`);await screenshot('admin-aggregate-desktop');
+ await command('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:true});await screenshot('admin-aggregate-mobile');
+ await accessibility();
+ await command('Emulation.setDeviceMetricsOverride',{width:1440,height:1000,deviceScaleFactor:1,mobile:false});
  assert.equal(await evaluate(`document.querySelector('#interest').hidden&&document.querySelector('#reading').hidden&&document.querySelector('#visitors').hidden`),true,'Unsupported individual metrics are hidden');
+ // Deliberately inject transport/API failures without changing real statistics.
+ await evaluate(`(async()=>{window.__originalFetch=window.fetch;window.__baseline=await(await window.fetch(${JSON.stringify(base+'/analytics-api.php?action=stats')})).json();window.__replyStats=structuredClone(window.__baseline);window.fetch=async function(input,options){const url=String(input);if(url.includes('action=stats'))return new Response(JSON.stringify(window.__replyStats),{status:200,headers:{'Content-Type':'application/json'}});return window.__originalFetch(input,options);};})()`);
+ await evaluate(`window.__replyStats={totals:{visits:99},publications:[],visits:[]};document.querySelector('#refresh').click()`);
+ await waitFor(`document.querySelector('#status').textContent.includes('unvollständig')`);
+ assert.equal(await evaluate(`document.querySelector('#count').textContent`),'1','Incomplete responses must not replace previously valid figures');
+ assert.equal(await evaluate(`document.querySelector('#sync-research').disabled`),true);
+ await evaluate(`window.__replyStats=structuredClone(window.__baseline);document.querySelector('#refresh').click()`);await waitFor(`!document.querySelector('#sync-research').disabled`);
+ await evaluate(`window.__replyStats.mode='detailed';window.__replyStats.totals={visits:2,average:5,total:10};document.querySelector('#refresh').click()`);
+ await waitFor(`document.querySelector('#count').textContent==='2'`);
+ assert.ok(await evaluate(`document.querySelector('#mode-note').textContent.includes('zugestimmten')`),'Changing to detailed mode must restore the consent explanation');
+ assert.equal(await evaluate(`document.querySelector('#interest').hidden`),false);
+ await evaluate(`window.__replyStats=structuredClone(window.__baseline);document.querySelector('#refresh').click()`);await waitFor(`document.querySelector('#count').textContent==='1'`);
+ await evaluate(`(()=>{const d=window.__replyStats;d.external.find(r=>r.kind==='citations').success=Date.now()/1000-172800;const failed=d.external.find(r=>r.kind==='links');failed.error='<img src=x onerror=window.bad=true>';const missing=d.external.filter(r=>r.kind==='citations')[1];d.external=d.external.filter(r=>r!==missing);const original=d.publications.find(p=>p.links?.zenodo),copy=structuredClone(original);copy.citationKey='duplicate-zenodo-test';copy.title='Another paper linking the same Zenodo record';d.publications.push(copy);const record=structuredClone(d.external.find(r=>r.publication===original.citationKey&&r.kind==='zenodo'));record.publication=copy.citationKey;d.external.push(record);document.querySelector('#refresh').click();})()`);
+ await waitFor(`document.querySelector('.source-badge.stale')&&document.querySelector('.source-badge.failed')&&document.querySelector('.source-badge.pending')`);
+ assert.equal(await evaluate(`document.querySelector('#zenodo-downloads').textContent`),'5','Shared Zenodo records must not be double-counted');
+ assert.equal(await evaluate(`window.bad===true`),false,'Source error messages must be rendered as text');
+ assert.ok(await evaluate(`document.querySelector('#sources-content').textContent.includes('<img src=x onerror=window.bad=true>')`));
+ assert.ok(await evaluate(`document.querySelector('#citation-total').textContent.includes('teilweise')`),'Missing citation coverage is explicit');
+ await evaluate(`window.__replyStats=structuredClone(window.__baseline);document.querySelector('#refresh').click()`);await waitFor(`!document.querySelector('.source-badge.failed')`);
+ await evaluate(`window.fetch=async function(input,options){const url=String(input);if(url.includes('action=refresh'))return new Response('{"cached":true}',{status:200});if(url.includes('action=stats'))throw new TypeError('Simulated network failure');return window.__originalFetch(input,options);};document.querySelector('[data-source-kind="citations"]').click()`);
+ await waitFor(`document.querySelector('#status').textContent.includes('letzten erfolgreichen Ansicht')`);
+ assert.equal(await evaluate(`document.querySelector('#sync-research').disabled`),true,'Failed post-refresh reload disables source mutations and labels stale data');
+ assert.equal(await evaluate(`document.querySelector('#count').textContent`),'1');
+ await evaluate(`window.fetch=window.__originalFetch;document.querySelector('#refresh').click()`);await waitFor(`!document.querySelector('#sync-research').disabled`);
  const brokenConfig=aggregateConfig.replace("__DIR__.'/../data'","__DIR__.'/unsafe-public-data'");fs.writeFileSync(path.join(publicDir,'analytics-config.php'),brokenConfig);
  await command('Page.navigate',{url:base+'/admin/'});await waitFor(`document.querySelector('#status')?.textContent.includes('STORAGE_PUBLIC')`);
+ assert.equal(await evaluate(`document.querySelector('#storage-help').hidden`),false,'Storage error has actionable help');
+ assert.ok(await evaluate(`document.querySelector('#storage-help-steps').textContent.includes('HTTP 403')`));
+ await screenshot('admin-storage-error');
  assert.equal(await evaluate(`document.querySelector('#interest').hidden&&document.querySelector('#visitors').hidden&&document.querySelector('#sync-research').disabled`),true,'Aggregate mode and disabled controls survive API failure');
  fs.writeFileSync(path.join(publicDir,'analytics-config.php'),aggregateConfig);await evaluate(`document.querySelector('#refresh').click()`);await waitFor(`document.querySelector('#count')?.textContent==='1'`);
+ assert.equal(await evaluate(`document.querySelector('#storage-help').hidden`),true,'Recovery clears error help');
+ await command('Network.setBlockedURLs',{urls:['https://*','*chart-4.6.2.umd.js*']});
+ await command('Page.navigate',{url:base+'/admin.php'});await waitFor(`document.querySelector('#count')?.textContent==='1'`);
+ assert.ok(await evaluate(`document.querySelector('#chart-message').textContent.includes('nicht verfügbar')`),'Local chart load failure keeps table fallback');
+ assert.equal(await evaluate(`document.querySelectorAll('#monthly-data tbody tr').length`),12);
+ await command('Network.setBlockedURLs',{urls:['https://*']});
  const nested=path.join(publicDir,'nested');fs.mkdirSync(nested);for(const f of['admin.php','analytics-api.php','analytics-lib.php','analytics-csv.php'])fs.copyFileSync(path.join(publicDir,f),path.join(nested,f));fs.cpSync(path.join(publicDir,'academic_website'),path.join(nested,'academic_website'),{recursive:true});
  fs.writeFileSync(path.join(nested,'analytics-config.php'),aggregateConfig.replace("__DIR__.'/../data'","dirname(__DIR__,2).'/data'"));
  for(const suffix of['/admin','/admin/','/nested/admin','/nested/admin/']){

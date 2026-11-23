@@ -1,5 +1,5 @@
 ﻿(() => {
-  let data, busy = false;
+  let data, busy = false, apiAvailable = false, monthlyChart;
   const el = id => document.getElementById(id);
   const apiBase = new URL(document.querySelector('meta[name="analytics-base"]')?.content || './', location.href);
   const apiUrl = action => new URL(`analytics-api.php?action=${action}`, apiBase).href;
@@ -19,17 +19,57 @@
     for(const title of headers){const th=node('th',title);th.scope='col';tr.append(th);}head.append(tr);
     for(const values of rows){const row=node('tr');for(const value of values){const td=node('td');if(value instanceof Node)td.append(value);else td.textContent=value??'–';row.append(td);}body.append(row);}
     t.append(head,body);container.append(t);
+    container.tabIndex=0;container.setAttribute('role','region');container.setAttribute('aria-label',`Tabelle: ${container.closest('section')?.querySelector('h2')?.textContent||headers[0]}`);
   }
   function external(pub,kind){return data.external.find(r=>r.publication===pub&&r.kind===kind);}
   function metadata(container,row) {
     const p=node('p',row ? `Letzter Erfolg: ${date(row.success)} · Letzter Versuch: ${date(row.checked)}` : 'Noch nicht abgerufen.');p.className='external-meta';container.append(p);
     if(row?.error){const e=node('p',`Abruf fehlgeschlagen: ${row.error}. Vorhandene Werte stammen vom letzten erfolgreichen Abruf.`);e.className='error';container.append(e);}
   }
+  const kinds={citations:'OpenAlex',zenodo:'Zenodo',links:'Publikationslinks'};
+  function renderSources(){
+    const container=el('sources-content');container.replaceChildren();
+    for(const pub of data.publications)for(const kind of ['citations',...(pub.links?.zenodo?['zenodo']:[]),'links']){
+      const row=external(pub.citationKey,kind),card=node('article'),head=node('div'),badge=node('span');
+      card.className='source-card';head.className='source-head';
+      const name=node('span',kinds[kind]);name.className='source-kind';
+      const stale=row?.success&&Date.now()/1000-Number(row.success)>(kind==='links'?7:1)*86400;
+      badge.className=`source-badge ${row?.error?'failed':!row?.success?'pending':stale?'stale':''}`;
+      badge.textContent=row?.error?'Abruffehler':!row?.success?'Noch kein Abruf':stale?'Veraltet':'Aktuell';head.append(name,badge);
+      card.append(head,node('h3',pub.title));metadata(card,row);
+      const button=node('button','Quelle aktualisieren');button.type='button';button.dataset.sourcePublication=pub.citationKey;button.dataset.sourceKind=kind;
+      button.setAttribute('aria-label',`${kinds[kind]} für ${pub.title} aktualisieren`);button.disabled=busy;card.append(button);container.append(card);
+    }
+    if(!container.children.length){const p=node('p','Noch keine Publikationen hinterlegt.');p.className='empty';container.append(p);}
+  }
+  function renderMonthlyChart(){
+    const aggregate=data.mode==='aggregate',rows=ResearchMetrics.monthly(data).slice(-Number(el('chart-range').value));
+    table(el('monthly-data'),['Monat (UTC)',aggregate?'Seitenaufrufe':'Besuche',...(!aggregate?['Publikationsaktionen']:[]),'Zitations-Nettoänderung'],rows.map(r=>[r.month,r.visits??'Nicht erfasst',...(!aggregate?[r.clicks??'Nicht erfasst']:[]),signed(r.citations)]));
+    monthlyChart?.destroy();monthlyChart=undefined;
+    const any=rows.some(r=>Number(r.visits)>0||Number(r.clicks)>0||r.citations!==null);
+    el('chart-message').textContent=any?'Serien über die Legende ein- und ausblenden. Details erscheinen beim Zeigen auf einen Messpunkt. Werte sind auch als Tabelle verfügbar.':'Noch keine Daten erfasst. Sobald Aufrufe oder vergleichbare Zitationsstände vorliegen, erscheint hier der Monatsverlauf.';
+    if(!window.Chart){el('monthly-chart').hidden=true;el('chart-message').textContent='Das Diagramm ist nicht verfügbar. Alle Monatswerte stehen in der Tabelle darunter.';return;}
+    el('monthly-chart').hidden=!any;if(!any)return;
+    const datasets=[{label:aggregate?'Seitenaufrufe':'Besuche',data:rows.map(r=>r.visits),backgroundColor:'#3869cf',borderRadius:4,maxBarThickness:34}];
+    if(!aggregate)datasets.push({label:'Publikationsaktionen',data:rows.map(r=>r.clicks),backgroundColor:'#27948a',borderRadius:4,maxBarThickness:34});
+    datasets.push({type:'line',label:'Zitations-Nettoänderung',data:rows.map(r=>r.citations),borderColor:'#8b65bf',backgroundColor:'#8b65bf',pointRadius:4,tension:.25,yAxisID:'citations',spanGaps:false});
+    monthlyChart=new Chart(el('monthly-canvas'),{type:'bar',data:{labels:rows.map(r=>r.month),datasets},options:{responsive:true,maintainAspectRatio:false,animation:false,interaction:{mode:'index',intersect:false},plugins:{legend:{position:'bottom',labels:{usePointStyle:true,padding:22,color:'#4a5b71',font:{family:'system-ui',size:12}}},tooltip:{filter:item=>item.raw!==null}},scales:{x:{grid:{display:false},ticks:{color:'#62738a',maxRotation:0,maxTicksLimit:6}},y:{beginAtZero:true,ticks:{precision:0,color:'#62738a'},grid:{color:'#edf0f5'}},citations:{position:'right',beginAtZero:true,grid:{drawOnChartArea:false},ticks:{precision:0,color:'#80619e'},title:{display:true,text:'Zitationsänderung',color:'#80619e'}}}}});
+  }
+  function showHelp(code){
+    const help={
+      STORAGE_NOT_WRITABLE:['PHP kann den Statistikordner nicht beschreiben.',['data_dir in analytics-config.php prüfen.','Für den Unterordner analytics-private: protected_storage aktivieren und dessen .htaccess mit hochladen.','Ordner und vorhandene CSV-/Sperrdateien müssen für den PHP-Benutzer beschreibbar sein.']],
+      STORAGE_PUBLIC:['Der öffentliche Speicherordner ist nicht ausreichend geschützt.',['Den vorgesehenen Ordner analytics-private und seine unveränderte .htaccess verwenden.','protected_storage aktivieren; Apache muss die Zugriffssperre auswerten.','Direkter Aufruf von analytics-private/analytics.csv muss HTTP 403 liefern.']],
+      CSV_INVALID:['Die Statistikdatei ist beschädigt. Sie wird nicht überschrieben.',['analytics.csv sichern.','Datei prüfen oder eine intakte Sicherung wiederherstellen.']],
+      CSV_BUSY:['Ein anderer Prozess schreibt gerade Statistikdaten.',['Kurz warten und anschließend die Ansicht aktualisieren.','Bei wiederholtem Auftreten PHP-Protokoll und parallele Abrufe prüfen.']]
+    };
+    const entry=help[code];el('storage-help').hidden=!entry;if(!entry)return;
+    el('storage-help-text').textContent=entry[0];el('storage-help-steps').replaceChildren(...entry[1].map(text=>node('li',text)));
+  }
   function renderCitations() {
     const pub=el('publication-filter').value;
     const container=el('citations-content');container.replaceChildren();
     const row=external(pub,'citations');metadata(container,row);
-    if(!row?.payload){container.append(node('p','Zitationsdaten noch nicht verfügbar. OpenAlex & Zenodo abrufen, um den ersten Stand zu speichern.'));return;}
+    if(!row?.payload){const empty=node('p','Noch keine Daten erfasst. Über „Datenquellen“ OpenAlex für diese Publikation aktualisieren.');empty.className='empty';container.append(empty);return;}
     const p=row.payload;
     const title=node('h3',`${p.count} Zitationen laut OpenAlex`);container.append(title,link('Quelle in OpenAlex',p.url));
     const history=ResearchMetrics.citationMonths(data.snapshots,pub,ResearchMetrics.months());
@@ -46,8 +86,10 @@
     for (const id of ['interest','reading','visitors','error-tracking']) el(id).hidden = aggregate;
     for (const id of ['interest','reading','visitors']) document.querySelector(`.admin-nav a[href="#${id}"]`).hidden = aggregate;
     for (const id of ['average','actions']) el(id).closest('.metric').hidden = aggregate;
-    el('count').parentElement.firstChild.textContent = aggregate ? 'Seitenaufrufe · 30 Kalendertage (UTC)' : 'Besuche · 30 Tage';
-    if (aggregate) el('mode-note').textContent = 'Serverseitige Aufrufzählung ohne gespeicherte IP-Adressen, Browserdaten oder Besucherkennungen. Gezählt werden Seitenabrufe, einschließlich möglicher Bots und wiederholter Abrufe. Keine Messung einzelner Besuche, Klicks oder Lesetiefe. Zitationen und Zenodo-Daten bleiben unabhängig davon verfügbar.';
+    el('count-label').textContent = aggregate ? 'Seitenaufrufe' : 'Besuche · 30 Tage';
+    el('count').closest('.metric').querySelector('.metric-caption').textContent=aggregate?'Letzte 30 Kalendertage · UTC':'Letzte 30 Tage · nach Einwilligung';
+    el('mode-badge').textContent=aggregate?'Aufrufzählung ohne Besucherkennungen':'Detailstatistik mit Einwilligung';
+    el('mode-note').textContent = aggregate ? 'Serverseitige Aufrufzählung ohne gespeicherte IP-Adressen, Browserdaten oder Besucherkennungen. Gezählt werden Seitenabrufe, einschließlich möglicher Bots und wiederholter Abrufe. Keine Messung einzelner Besuche, Klicks oder Lesetiefe. Zitationen und Zenodo-Daten bleiben unabhängig davon verfügbar.' : 'Besuchsdaten stammen ausschließlich aus zugestimmten Erfassungen. Ein Besuch ist ein Seitenaufruf, keine eindeutige Person. Klicks zeigen Interesse; BibTeX-Aktionen belegen keine wissenschaftliche Zitation.';
   }
   function render() {
     const aggregate = data.mode === 'aggregate';
@@ -56,6 +98,11 @@
     el('actions').textContent=data.engagement.reduce((n,r)=>n+Number(r.clicks),0);
     const available=data.publications.map(p=>external(p.citationKey,'citations')).filter(r=>r?.payload);
     el('citation-total').textContent=available.length?`${available.reduce((n,r)=>n+Number(r.payload.count),0)}${available.length<data.publications.length?' (teilweise)':''}`:'–';
+    const zenodoPubs=data.publications.filter(p=>p.links?.zenodo),seenRecords=new Set(),zenodo=[];
+    for(const p of zenodoPubs){const row=external(p.citationKey,'zenodo');if(row?.payload&&!seenRecords.has(row.payload.url||p.links.zenodo)){seenRecords.add(row.payload.url||p.links.zenodo);zenodo.push(row);}}
+    const complete=zenodoPubs.every(p=>external(p.citationKey,'zenodo')?.payload);
+    for(const [id,key]of [['zenodo-downloads','downloads'],['zenodo-views','views']])el(id).textContent=zenodo.length?`${zenodo.reduce((n,r)=>n+Number(r.payload[key]),0)}${complete?'':' (teilweise)'}`:'–';
+    el('zenodo-downloads-note').textContent=zenodo.length?'Kumuliert · verlinkte Versionen':'Noch keine Daten erfasst';
     el('status').textContent=`Aktualisiert · Besuchsdetails: ${data.retentionDays} Tage · ${data.fullIp?'Vollständige':'Gekürzte'} IP-Adressen · Monatsaggregate: 24 Monate`;
     if (aggregate) el('status').textContent = 'Aktualisiert · Reine Aufrufzählung · Tageszahlen: 30 Kalendertage · Monatszahlen: 24 Monate';
     const rows=ResearchMetrics.monthly(data);const current=rows.at(-1),previous=rows.at(-2);
@@ -66,10 +113,8 @@
       ...(!aggregate ? [['Publikationsaktionen',previous.clicks??'Nicht erfasst',current.clicks??'Nicht erfasst',previous.clicks===null||current.clicks===null?'Nicht verfügbar':signed(current.clicks-previous.clicks)]] : []),
       ['Zitations-Nettoänderung',signed(previous.citations),signed(current.citations),current.citations===null||previous.citations===null?'Nicht verfügbar':signed(current.citations-previous.citations)]
     ]);
-    const chart=el('monthly-chart');chart.replaceChildren();const max=Math.max(1,...rows.flatMap(r=>[r.visits,r.clicks]));
     el('comparison').querySelector('h3').textContent = aggregate ? 'Seitenaufrufe nach Monat' : 'Besuche und Publikationsaktionen nach Monat';
-    chart.append(node('p',aggregate?'Blau: Seitenaufrufe. Fehlende Erfassung ist keine tatsächliche Null.':'Blau: Besuche · Grün: Publikationsaktionen. Fehlende Erfassung kann nicht als tatsächliche Null interpretiert werden.'));
-    for(const r of rows){const row=node('div');row.className='bar-row';row.append(node('span',r.month));const pair=node('div');pair.className='bar-pair';for(const [i,v]of(aggregate?[r.visits]:[r.visits,r.clicks]).entries()){const bar=node('span');bar.className=i?'bar secondary':'bar';bar.style.width=`${100*(v??0)/max}%`;pair.append(bar);}row.append(pair,node('span',aggregate?`${r.visits??'–'}`:`${r.visits??'–'} / ${r.clicks??'–'}`));chart.append(row);}
+    renderMonthlyChart();renderSources();
     const targets=['doi','fulltext','data','bibtex-copy','bibtex-download','other'];
     const grouped=data.publications.map(p=>{const counts=Object.fromEntries(targets.map(t=>[t,0]));for(const r of data.engagement.filter(r=>r.publication===p.citationKey)){const t=r.target;const group=t==='doi'?t:['publisher','igi','acm','ssrn','pdf','fulltext'].includes(t)?'fulltext':['zenodo','data','dataset'].includes(t)?'data':targets.includes(t)?t:'other';counts[group]+=Number(r.clicks);}return[p.title,...targets.map(t=>counts[t])];});
     table(el('interest-table'),['Publikation','DOI','Volltext / Verlag / Preprint','Datenpaket','BibTeX kopieren','BibTeX Download','Weitere Links'],grouped);
@@ -77,7 +122,7 @@
     const select=el('publication-filter'),selected=select.value;select.replaceChildren();
     for(const p of data.publications){const option=node('option',p.title);option.value=p.citationKey;select.append(option);}if(data.publications.some(p=>p.citationKey===selected))select.value=selected;renderCitations();
     const datasets=el('zenodo-content');datasets.replaceChildren();
-    for(const p of data.publications.filter(p=>p.links?.zenodo)){const row=external(p.citationKey,'zenodo');datasets.append(node('h3',p.title));metadata(datasets,row);if(row?.payload){const v=row.payload;datasets.append(node('p',`${v.views} Aufrufe · ${v.downloads} Downloads`),link('Datensatz bei Zenodo',v.url));}}
+    for(const p of data.publications.filter(p=>p.links?.zenodo)){const row=external(p.citationKey,'zenodo'),card=node('article');card.className='dataset-item';card.append(node('h3',p.title));metadata(card,row);if(row?.payload){const v=row.payload;card.append(node('p',`${v.views} Aufrufe · ${v.downloads} Downloads`),link('Datensatz bei Zenodo',v.url));}else{const empty=node('p','Noch keine Daten erfasst. Zenodo unter „Datenquellen“ aktualisieren.');empty.className='empty';card.append(empty);}datasets.append(card);}
     if(!datasets.children.length)datasets.append(node('p','Keine Zenodo-Pakete hinterlegt.'));
     const labels={'short-bio':'Kurzbiografie',about:'Über mich',research:'Forschung',publications:'Publikationen',service:'Akademischer Service',news:'Neuigkeiten',contact:'Kontakt',i18n:'Sprachdaten'};
     const sections=['short-bio','about','research','publications','service','news','contact'];
@@ -89,6 +134,7 @@
     for(const p of data.publications){const row=external(p.citationKey,'links');if(!row?.payload){linkRows.push([p.title,'–','Noch nicht geprüft',row?.error||'–',date(row?.checked)]);continue;}for(const l of row.payload.links)linkRows.push([p.title,link(l.name.toUpperCase(),l.url),l.state,l.status||l.error||'–',date(row.success)]);}
     table(el('links-table'),['Publikation','Link','Zustand','HTTP / Hinweis','Geprüft'],linkRows);
     el('visits').replaceChildren();for(const v of data.visits){const tr=node('tr');for(const value of[date(v.started),v.path,duration(v.seconds),source(v.referrer),v.ip,v.browser])tr.append(node('td',value));el('visits').append(tr);}
+    if(!data.visits.length){const row=node('tr'),cell=node('td','Noch keine Daten erfasst. Besuche erscheinen erst nach Einwilligung.');cell.colSpan=6;row.append(cell);el('visits').append(row);}
   }
   async function load(){
     let r;
@@ -102,13 +148,39 @@
       if(r.status===404)throw Error('Die Statistik-API wurde nicht gefunden. analytics-api.php zusammen mit admin.php in denselben Website-Ordner hochladen.');
       const detail=typeof payload.error==='string'?payload.error:'PHP-Konfiguration und Datenbank prüfen.';
       const code=typeof payload.code==='string'?` [${payload.code}]`:'';
-      throw Error(`Statistik nicht verfügbar (HTTP ${r.status})${code}: ${detail}`);
+      const error=Error(`Statistik nicht verfügbar (HTTP ${r.status})${code}: ${detail}`);error.code=payload.code;throw error;
     }
-    if(!payload?.totals||!Array.isArray(payload.publications)||!Array.isArray(payload.visits))throw Error('Die Statistik-Antwort ist unvollständig. Alle Admin- und API-Dateien in derselben Version hochladen.');
-    data=payload;render();
+    const incomplete='Die Statistik-Antwort ist unvollständig. Alle Admin- und API-Dateien in derselben Version hochladen.';
+    if(!payload?.totals||!Number.isFinite(payload.totals.visits)||payload.totals.visits<0
+      ||!['aggregate','detailed'].includes(payload.mode)||!Number.isFinite(payload.trackingStarted)
+      ||!Number.isFinite(new Date(payload.trackingStarted*1000).getTime())
+      ||!['publications','visits','external','monthly','snapshots','engagement','conversion','reading'].every(key=>Array.isArray(payload[key])))throw Error(incomplete);
+    const previous=data;
+    try{data=payload;render();}catch(_){data=previous;if(data)render();throw Error(incomplete);}
+    apiAvailable=true;el('status').closest('.status-line').classList.remove('has-error');showHelp();
   }
-  function controls(disabled){el('refresh').disabled=disabled;for(const id of['sync-research','check-links'])el(id).disabled=disabled||!data;}
-  async function refresh(){if(busy)return;busy=true;controls(true);try{await load();}catch(e){el('status').textContent=e.message;}finally{busy=false;controls(false);}}
+  function controls(disabled){el('refresh').disabled=disabled;el('chart-range').disabled=!data;for(const id of['sync-research','check-links'])el(id).disabled=disabled||!apiAvailable;for(const button of document.querySelectorAll('[data-source-kind]'))button.disabled=disabled||!apiAvailable;}
+  function loadError(error){
+    apiAvailable=false;
+    el('status').textContent=`${error.message}${data?' · Die angezeigten Werte stammen aus der letzten erfolgreichen Ansicht.':''}`;
+    el('status').closest('.status-line').classList.add('has-error');showHelp(error.code);
+    if(!data){
+      applyMode(document.documentElement.dataset.analyticsMode||'aggregate');
+      for(const id of['count','citation-total','zenodo-downloads','zenodo-views','average','actions'])el(id).textContent='–';
+      monthlyChart?.destroy();monthlyChart=undefined;el('monthly-chart').hidden=true;
+      el('chart-message').textContent='Der Monatsverlauf ist verfügbar, sobald die Statistik wieder geladen werden kann.';
+      for(const id of['sources-content','citations-content','zenodo-content']){const p=node('p','Daten konnten nicht geladen werden. Bitte den Hinweis oben beachten.');p.className='empty';el(id).replaceChildren(p);}
+    }
+  }
+  async function refresh(){if(busy)return;busy=true;controls(true);try{await load();}catch(e){loadError(e);}finally{busy=false;controls(false);}}
+  async function syncSource(publication,kind){
+    if(busy||!data)return;busy=true;controls(true);el('source-status').textContent=`${kinds[kind]} wird aktualisiert …`;
+    try{
+      const response=await fetch(apiUrl('refresh'),{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({publication,kind})});
+      const result=await response.json();if(!response.ok){const error=Error(result.error||`Abruf fehlgeschlagen (HTTP ${response.status}).`);error.code=result.code;throw error;}
+      await load();el('source-status').textContent=result.busy?'Diese Quelle wird bereits abgerufen. Ansicht später aktualisieren.':result.cached?'Gespeicherter Stand verwendet: Diese Quelle wurde innerhalb der letzten Stunde geprüft.':result.ok?'Quelle erfolgreich aktualisiert.':`Abruf fehlgeschlagen: ${result.error||'Quelle nicht erreichbar'}. Der letzte erfolgreiche Stand bleibt erhalten.`;
+    }catch(e){el('source-status').textContent=e.message;loadError(e);}finally{busy=false;controls(false);}
+  }
   async function sync(links=false){
     if(busy||!data)return;busy=true;controls(true);const status=el(links?'link-status':'sync-status');let errors=0,cached=0,running=0;
     const jobs=data.publications.flatMap(p=>links?[[p,'links']]:[[p,'citations'],...(p.links?.zenodo?[[p,'zenodo']]:[])]);
@@ -116,8 +188,15 @@
       status.textContent=`${i+1}/${jobs.length}: ${p.title} · ${kind} …`;
       try{const r=await fetch(apiUrl('refresh'),{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({publication:p.citationKey,kind})});if(!r.ok)throw Error();const result=await r.json();if(result.busy)running++;else if(result.cached)cached++;else if(!result.ok)errors++;}catch(_){errors++;}
     }await load();status.textContent=`Abruf abgeschlossen: ${errors} Fehler · ${cached} bereits innerhalb der letzten Stunde geprüft${running?` · ${running} Abrufe laufen bereits; Ansicht später aktualisieren`:''}. Details und letzte erfolgreiche Stände stehen bei den Quellen.`;
-    }catch(e){status.textContent=e.message;}finally{busy=false;controls(false);}
+    }catch(e){status.textContent=e.message;loadError(e);}finally{busy=false;controls(false);}
   }
   el('refresh').onclick=refresh;el('sync-research').onclick=()=>sync();el('check-links').onclick=()=>sync(true);el('publication-filter').onchange=renderCitations;
+  el('chart-range').onchange=()=>{if(data)renderMonthlyChart();};
+  el('sources-content').onclick=event=>{const button=event.target.closest('[data-source-kind]');if(button)syncSource(button.dataset.sourcePublication,button.dataset.sourceKind);};
+  const sidebar=document.querySelector('.admin-sidebar'),menu=el('menu-toggle');
+  function closeMenu(){sidebar.classList.remove('menu-open');menu.setAttribute('aria-expanded','false');menu.textContent='Menü öffnen';}
+  menu.onclick=()=>{const open=sidebar.classList.toggle('menu-open');menu.setAttribute('aria-expanded',String(open));menu.textContent=open?'Menü schließen':'Menü öffnen';};
+  document.addEventListener('keydown',event=>{if(event.key==='Escape'&&sidebar.classList.contains('menu-open')){closeMenu();menu.focus();}});
+  for(const anchor of document.querySelectorAll('.admin-nav a'))anchor.addEventListener('click',()=>{for(const other of document.querySelectorAll('.admin-nav a'))other.removeAttribute('aria-current');anchor.setAttribute('aria-current','location');closeMenu();const target=document.querySelector(anchor.getAttribute('href'));if(target){target.setAttribute('tabindex','-1');target.focus({preventScroll:true});}});
   applyMode(document.documentElement.dataset.analyticsMode || 'aggregate');refresh();
 })();
