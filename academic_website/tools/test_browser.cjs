@@ -48,6 +48,12 @@ async function accessibility(){if(!process.env.AXE_PATH)return;await evaluate(fs
  await command('Network.setExtraHTTPHeaders',{headers:{Authorization:'Basic '+Buffer.from('admin:'+password).toString('base64')}});
  await command('Emulation.setDeviceMetricsOverride',{width:1440,height:1000,deviceScaleFactor:1,mobile:false});
  await command('Page.navigate',{url:base+'/admin.php'});await waitFor(`document.querySelector('#citation-total')?.textContent==='12'`);
+ await waitFor(`document.querySelector('#dashboard-refresh-status').textContent.includes('Dashboard aktualisiert')&&!document.querySelector('#refresh-dashboard').disabled`);
+ const dailyRequests=requests.filter(url=>url.includes('action=dashboard-refresh')).length;
+ assert.equal(dailyRequests,10,'First daily dashboard open starts a batch and processes nine source steps');
+ await evaluate(`document.querySelector('#refresh-dashboard').click()`);
+ await waitFor(`document.querySelector('#dashboard-refresh-status').textContent.includes('Dashboard aktualisiert')&&!document.querySelector('#refresh-dashboard').disabled`);
+ assert.equal(requests.filter(url=>url.includes('action=dashboard-refresh')).length,dailyRequests+10,'Dashboard button updates all sources again');
  await evaluate(`document.documentElement.style.scrollBehavior='auto'`);
  assert.equal(await evaluate(`document.querySelector('#count').textContent`),'0');
  assert.equal(await evaluate(`document.querySelector('#zenodo-downloads').textContent`),'5');
@@ -117,6 +123,7 @@ async function accessibility(){if(!process.env.AXE_PATH)return;await evaluate(fs
  stats=await(await fetch(base+'/analytics-api.php?action=stats',{headers:{Authorization:'Basic '+Buffer.from('admin:'+password).toString('base64')}})).json();assert.equal(stats.totals.visits,1,'HEAD and explicit privacy signals do not increase counts');
  const denied=await fetch(base+'/analytics-api.php?action=visit',{method:'POST',headers:{Origin:base,'Content-Type':'application/json'},body:JSON.stringify({path:'/'})});assert.equal(denied.status,410,'Old tracker clients cannot start visits in aggregate mode');
  await command('Page.navigate',{url:base+'/admin.php'});await waitFor(`document.querySelector('#count')?.textContent==='1'`);
+ await waitFor(`document.querySelector('#dashboard-refresh-status').textContent.includes('bereits aktualisiert')&&!document.querySelector('#refresh-dashboard').disabled`);
  await waitFor(`!!Chart.getChart('monthly-canvas')`);
  assert.equal(await evaluate(`Chart.getChart('monthly-canvas').data.labels.length`),12);
  await evaluate(`document.querySelector('#chart-range').value='6';document.querySelector('#chart-range').dispatchEvent(new Event('change'))`);

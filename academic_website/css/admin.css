@@ -195,12 +195,14 @@ h1 {
   margin:0;
   font-size:.9375rem
 }
-#refresh {
+#refresh-dashboard {
   background:#285acb;
   border-color:#285acb;
   color:white;
   flex-shrink:0
 }
+.dashboard-actions {display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end;max-width:340px}
+@media(max-width:800px){.dashboard-actions{justify-content:flex-start}}
 .status-line {
   display:flex;
   align-items:flex-start;

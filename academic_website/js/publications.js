@@ -74,23 +74,26 @@
       const venue = escapeHtml(p.venue || "");
 
       const links = p.links || {};
+      const linkLabels = lang === 'de'
+        ? {doi:'DOI',publisher:'Verlag',igi:'Verlag',ssrn:'Preprint',zenodo:'Forschungsdaten',pdf:'PDF',fulltext:'Volltext',data:'Daten',dataset:'Daten'}
+        : {doi:'DOI',publisher:'Publisher',igi:'Publisher',ssrn:'Preprint',zenodo:'Research data',pdf:'PDF',fulltext:'Full text',data:'Data',dataset:'Data'};
       const linkEntries = Object.entries(links)
         .filter(([, url]) => {
           try { return ["https:", "http:"].includes(new URL(url).protocol); }
           catch (_) { return false; }
         })
-        .map(([k, url]) => ({ label: String(k).toUpperCase(), url: String(url) }));
+        .map(([k, url]) => ({ key:String(k).toLowerCase(), label:linkLabels[String(k).toLowerCase()] || String(k).toUpperCase(), url: String(url) }));
 
       const el = document.createElement("article");
       el.className = "pub";
       el.setAttribute?.('data-publication', p.citationKey || '');
       el.innerHTML = `
-        <p class="pub-title">${title}${p.award ? `<span class="badge">${escapeHtml(p.award)}</span>` : ""}</p>
+        <div class="pub-heading">${parseYear(p) ? `<span class="pub-year">${parseYear(p)}</span>` : ""}<h3 class="pub-title">${title}${p.award ? `<span class="badge">${escapeHtml(p.award)}</span>` : ""}</h3></div>
         <p class="pub-authors">${authors}</p>
         <p class="pub-venue"><em>${venue}</em></p>
         ${linkEntries.length ? `
           <div class="pub-links">
-            ${linkEntries.map(l => `<a href="${escapeHtml(l.url)}" data-stat-target="${escapeHtml(l.label.toLowerCase())}" target="_blank" rel="noopener">${escapeHtml(l.label)}</a>`).join("")}
+            ${linkEntries.map(l => `<a href="${escapeHtml(l.url)}" data-stat-target="${escapeHtml(l.key)}" target="_blank" rel="noopener">${escapeHtml(l.label)}</a>`).join("")}
           </div>` : ""}
       `;
       if (typeof p.bibtex === "string" && p.bibtex.trim()) {

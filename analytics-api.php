@@ -27,10 +27,10 @@ try {
     $config = analyticsConfig();
     $action = $_GET['action'] ?? '';
     $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
-    $adminRequest = ($action === 'stats' && $method === 'GET') || ($action === 'refresh' && $method === 'POST');
+    $adminRequest = ($action === 'stats' && $method === 'GET') || (in_array($action, ['refresh','dashboard-refresh'], true) && $method === 'POST');
     $mode = analyticsMode($config);
     if ($action === 'config' && $method === 'GET') respond(200, ['enabled' => $mode === 'detailed', 'mode' => $mode, 'fullIp' => $mode === 'detailed' && !empty($config['full_ip'])]);
-    if (($action === 'stats' && $method === 'GET') || ($action === 'refresh' && $method === 'POST')) requireAdmin($config);
+    if ($adminRequest) requireAdmin($config);
     elseif (!in_array($action, ['visit','event','maintenance'], true) || $method !== 'POST') respond(404, []);
     if ($mode !== 'detailed' && in_array($action, ['visit','event'], true)) respond(410, ['error' => 'Individual tracking disabled']);
     if ($method === 'POST') {
@@ -51,6 +51,10 @@ try {
     $store = analyticsStorage($config);
     if ($action === 'maintenance') respond(200, maintenanceStep($store, $config));
     if ($action === 'stats') respond(200, analyticsStats($store, $config));
+    if ($action === 'dashboard-refresh') {
+        try { respond(200, dashboardRefresh($store, $config, $input)); }
+        catch (InvalidArgumentException $e) { respond(400, ['error' => $e->getMessage()]); }
+    }
     if ($action === 'refresh') {
         if (!is_string($input['publication'] ?? null) || !is_string($input['kind'] ?? null)) respond(400, []);
         try { respond(200, refreshResearch($store, $config, $input['publication'], $input['kind'])); }

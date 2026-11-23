@@ -31,6 +31,9 @@ async function post(data, origin=base) { return fetch(base+'/analytics-api.php?a
   assert.equal((await fetch(base+'/admin.php',{headers:{Authorization:'Basic '+Buffer.from('admin:wrong').toString('base64')}})).status,401);
   assert.equal((await fetch(base+'/analytics-api.php?action=stats')).status,401);
   assert.equal((await fetch(base+'/analytics-api.php?action=refresh',{method:'POST'})).status,401);
+  assert.equal((await fetch(base+'/analytics-api.php?action=dashboard-refresh',{method:'POST'})).status,401);
+  assert.equal((await fetch(base+'/analytics-api.php?action=dashboard-refresh',{method:'POST',headers:{Authorization:auth,Origin:'https://other.example','Content-Type':'application/json'},body:'{}'})).status,403);
+  assert.equal((await fetch(base+'/analytics-api.php?action=dashboard-refresh',{method:'POST',headers:{Authorization:auth,Origin:base,'Content-Type':'application/json'},body:JSON.stringify({operation:'step',token:'invalid'})})).status,400);
   assert.equal((await fetch(base+'/sync-analytics.php')).status,404);
   assert.equal((await fetch(base+'/academic_website/tools/test_research.php')).status,404);
   assert.equal((await fetch(base+'/analytics-api.php?action=maintenance',{method:'POST',headers:{Origin:'https://other.example','Content-Type':'application/json'},body:'{}'})).status,403);

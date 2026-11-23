@@ -159,7 +159,7 @@
     try{data=payload;render();}catch(_){data=previous;if(data)render();throw Error(incomplete);}
     apiAvailable=true;el('status').closest('.status-line').classList.remove('has-error');showHelp();
   }
-  function controls(disabled){el('refresh').disabled=disabled;el('chart-range').disabled=!data;for(const id of['sync-research','check-links'])el(id).disabled=disabled||!apiAvailable;for(const button of document.querySelectorAll('[data-source-kind]'))button.disabled=disabled||!apiAvailable;}
+  function controls(disabled){el('refresh').disabled=disabled;el('refresh-dashboard').disabled=disabled;el('chart-range').disabled=!data;for(const id of['sync-research','check-links'])el(id).disabled=disabled||!apiAvailable;for(const button of document.querySelectorAll('[data-source-kind]'))button.disabled=disabled||!apiAvailable;}
   function loadError(error){
     apiAvailable=false;
     el('status').textContent=`${error.message}${data?' · Die angezeigten Werte stammen aus der letzten erfolgreichen Ansicht.':''}`;
@@ -173,6 +173,25 @@
     }
   }
   async function refresh(){if(busy)return;busy=true;controls(true);try{await load();}catch(e){loadError(e);}finally{busy=false;controls(false);}}
+  async function refreshDashboard(manual=true){
+    if(busy)return;busy=true;controls(true);const status=el('dashboard-refresh-status');
+    status.textContent=manual?'Dashboard wird aktualisiert …':'Erster Dashboard-Aufruf des UTC-Tages wird geprüft …';
+    async function request(body){
+      const response=await fetch(apiUrl('dashboard-refresh'),{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+      const result=await response.json();if(!response.ok){const error=Error(result.error||`Aktualisierung fehlgeschlagen (HTTP ${response.status}).`);error.code=result.code;throw error;}
+      if(!['running','complete','current','busy'].includes(result.state))throw Error('Ungültige Antwort auf die Dashboard-Aktualisierung. API- und Admin-Dateien gemeinsam aktualisieren.');
+      return result;
+    }
+    try{
+      let result=await request({operation:'start',manual});
+      while(result.state==='running'){
+        status.textContent=`${manual?'Dashboard':'Tägliche Aktualisierung'}: ${result.done}/${result.total} Quellen geprüft …`;
+        result=await request({operation:'step',token:result.token});
+      }
+      await load();
+      status.textContent=result.state==='current'?`Heute (${result.day}, Europe/Berlin) bereits aktualisiert. Für einen weiteren Abruf „Dashboard aktualisieren“ wählen.`:result.state==='busy'?'Eine Aktualisierung läuft bereits. Nach Abschluss die Ansicht neu laden.':`Dashboard aktualisiert: ${result.total} Quellen geprüft · ${result.errors} Fehler · ${result.cached} aus dem Stunden-Cache. Letzte erfolgreiche Daten bleiben bei Quellenfehlern erhalten.`;
+    }catch(e){status.textContent=`Aktualisierung unterbrochen: ${e.message}`;loadError(e);}finally{busy=false;controls(false);}
+  }
   async function syncSource(publication,kind){
     if(busy||!data)return;busy=true;controls(true);el('source-status').textContent=`${kinds[kind]} wird aktualisiert …`;
     try{
@@ -191,6 +210,7 @@
     }catch(e){status.textContent=e.message;loadError(e);}finally{busy=false;controls(false);}
   }
   el('refresh').onclick=refresh;el('sync-research').onclick=()=>sync();el('check-links').onclick=()=>sync(true);el('publication-filter').onchange=renderCitations;
+  el('refresh-dashboard').onclick=()=>refreshDashboard(true);
   el('chart-range').onchange=()=>{if(data)renderMonthlyChart();};
   el('sources-content').onclick=event=>{const button=event.target.closest('[data-source-kind]');if(button)syncSource(button.dataset.sourcePublication,button.dataset.sourceKind);};
   const sidebar=document.querySelector('.admin-sidebar'),menu=el('menu-toggle');
@@ -198,5 +218,6 @@
   menu.onclick=()=>{const open=sidebar.classList.toggle('menu-open');menu.setAttribute('aria-expanded',String(open));menu.textContent=open?'Menü schließen':'Menü öffnen';};
   document.addEventListener('keydown',event=>{if(event.key==='Escape'&&sidebar.classList.contains('menu-open')){closeMenu();menu.focus();}});
   for(const anchor of document.querySelectorAll('.admin-nav a'))anchor.addEventListener('click',()=>{for(const other of document.querySelectorAll('.admin-nav a'))other.removeAttribute('aria-current');anchor.setAttribute('aria-current','location');closeMenu();const target=document.querySelector(anchor.getAttribute('href'));if(target){target.setAttribute('tabindex','-1');target.focus({preventScroll:true});}});
-  applyMode(document.documentElement.dataset.analyticsMode || 'aggregate');refresh();
+  applyMode(document.documentElement.dataset.analyticsMode || 'aggregate');
+  (async()=>{await refresh();if(apiAvailable)await refreshDashboard(false);})();
 })();

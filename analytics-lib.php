@@ -288,6 +288,43 @@ function refreshResearch(AnalyticsCsvStore $store, array $config, string $pubId,
     } finally {flock($lock,LOCK_UN);fclose($lock);}
 }
 
+// One short HTTP request per source. State survives closed tabs and is shared by all admins.
+function dashboardRefresh(AnalyticsCsvStore $store, array $config, array $input, ?callable $request = null, ?int $now = null): array {
+    $now=$now??time();$day=(new DateTimeImmutable('@'.$now))->setTimezone(new DateTimeZone('Europe/Berlin'))->format('Y-m-d');
+    $operation=$input['operation']??'start';
+    if(!in_array($operation,['start','step'],true)||($operation==='start'&&isset($input['manual'])&&!is_bool($input['manual'])))throw new InvalidArgumentException('Ungültige Aktualisierungsanfrage');
+    $lock=@fopen($store->directory().'/dashboard-refresh.lock','c');if(!$lock)throw new RuntimeException('Storage unavailable');
+    if(!flock($lock,LOCK_EX|LOCK_NB)){fclose($lock);return ['state'=>'busy'];}
+    try {
+        $key=AnalyticsCsvStore::key(['dashboard_refresh']);
+        $state=$store->read(static fn($t)=>isset($t['meta'][$key])?json_decode($t['meta'][$key]['value'],true,512,JSON_THROW_ON_ERROR):null);
+        if($operation==='start'){
+            if(!empty($state['remaining'])&&$now-(int)$state['updated']<300)return ['state'=>'busy'];
+            if(empty($input['manual'])&&($state['day']??null)===$day&&!empty($state['completed']))return ['state'=>'current','day'=>$day,'completed'=>$state['completed']];
+            if(($state['day']??null)!==$day||empty($state['remaining'])){
+                $jobs=[];foreach(publications()as$id=>$pub)foreach(['citations',...(!empty($pub['links']['zenodo'])?['zenodo']:[]),'links']as$kind)$jobs[]=['publication'=>$id,'kind'=>$kind];
+                $state=['day'=>$day,'remaining'=>$jobs,'total'=>count($jobs),'errors'=>0,'cached'=>0,'completed'=>null];
+            }
+            $state['token']=bin2hex(random_bytes(24));$state['updated']=$now;
+        } else {
+            if(!is_string($input['token']??null)||!is_array($state)||!hash_equals($state['token']??'',$input['token'])||$input['token']==='')throw new InvalidArgumentException('Aktualisierung abgelaufen. Dashboard erneut öffnen.');
+            if(!empty($state['completed']))return ['state'=>'complete','day'=>$state['day'],'errors'=>$state['errors'],'cached'=>$state['cached'],'total'=>$state['total']];
+            $job=$state['remaining'][0]??null;
+            if($job){
+                $result=refreshResearch($store,$config,$job['publication'],$job['kind'],$request);
+                if(!empty($result['busy']))return ['state'=>'busy'];
+                array_shift($state['remaining']);
+                if(!empty($result['cached']))$state['cached']++;
+                elseif(empty($result['ok']))$state['errors']++;
+            }
+            $state['updated']=$now;
+        }
+        if(!$state['remaining'])$state['completed']=$now;
+        $store->update(static function(array &$t)use($state):void{AnalyticsCsvStore::put($t,'meta',['key'=>'dashboard_refresh','value'=>json_encode($state,JSON_THROW_ON_ERROR)]);});
+        return ['state'=>$state['completed']?'complete':'running','token'=>$state['token'],'day'=>$state['day'],'done'=>$state['total']-count($state['remaining']),'total'=>$state['total'],'errors'=>$state['errors'],'cached'=>$state['cached']];
+    } finally {flock($lock,LOCK_UN);fclose($lock);}
+}
+
 function maintenanceStep(AnalyticsCsvStore $store, array $config, ?callable $request = null, ?int $now = null): array {
     if(($config['automatic_refresh']??true)===false)return ['state'=>'disabled'];
     $now=$now??time();

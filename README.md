@@ -84,6 +84,12 @@ Each successful citation fetch saves a daily snapshot. Monthly net changes compa
 
 ### Automatic refresh without cron
 
+The admin header provides **Dashboard aktualisieren** to check every publication's OpenAlex/Zenodo data and publication links, then reload the dashboard. **Nur Ansicht neu laden** reloads the stored figures without starting this batch. The first dashboard opening of each calendar day in `Europe/Berlin` starts the same batch automatically. The daily state is stored on the server and shared across browsers/devices. Each source runs as a separate authenticated request to avoid one long batch request. Existing hourly source caching still applies, including to manual repeats.
+
+Overlapping batches are blocked. If a tab closes during a batch, a later dashboard opening can resume unfinished jobs after a five-minute lease expires. Each step and source refresh is locked; old lease tokens cannot advance a resumed run. Source failures preserve previous successful values and are reported at completion. Closing every admin tab can interrupt the batch: this feature requires an open dashboard and is not a background scheduler. The existing public maintenance requests remain independent of the daily admin batch.
+
+Test daily starts, day rollover, locks, recovery and caching with `php academic_website/tools/test_dashboard_refresh.php`.
+
 **No cronjob is required.** Website and admin page views now trigger an asynchronous maintenance request. While a tab remains visible it checks once per minute. Each request processes at most one due publication/source, with a global one-minute throttle and a shared nonblocking lock. Anonymous callers cannot choose targets or retrieve research diagnostics. These requests refresh public research metadata; they do not record visits or interactions and do not require analytics consent.
 
 Citations and Zenodo are due after 24 hours; publication-link checks after seven days. Failed jobs are eligible for retry after one hour. The oldest due jobs run first, preserving successful cached data on errors. Initial population of all publications can take multiple page views/minutes; the manual dashboard buttons remain available to fetch all sources directly. Set `automatic_refresh` to `false` in the private config to disable this behavior.
