@@ -8,6 +8,10 @@ return [
     'analytics_mode' => 'aggregate',
     // Must be outside the public document root and writable by PHP.
     'data_dir' => dirname(__DIR__) . '/analytics-private',
+    // Apache alternative when parent directories are not writable:
+    // upload analytics-private/.htaccess and verify HTTP access returns 403 first.
+    // 'data_dir' => __DIR__ . '/analytics-private',
+    // 'protected_storage' => true,
     'full_ip' => false,
     // Optional, server-only OpenAlex key for a higher API quota.
     'openalex_api_key' => '',

@@ -49,6 +49,21 @@ Set `analytics_mode` to `detailed` only if you want to restore individual metric
 3. Set `data_dir` to a PHP-writable directory **outside your public document root**. PHP creates `analytics.csv` and its lock files there. Upload `analytics-csv.php` alongside `analytics-lib.php`.
 4. Serve the website through your PHP hosting with HTTPS. For local development use `php -S 127.0.0.1:8000` from this directory, then open `http://127.0.0.1:8000/admin.php`.
 
+### Protected storage subfolder on Apache (including restricted shared hosting)
+
+When the host prevents writes above the website, use the supplied `analytics-private/` subfolder:
+
+```php
+'data_dir' => __DIR__ . '/analytics-private',
+'protected_storage' => true,
+```
+
+Upload `analytics-private/.htaccess` (including the hidden file) and the updated root `.htaccess`, `analytics-lib.php` and `analytics-api.php`. The folder must be writable by PHP. Its `.htaccess` must contain `Require all denied`; the root rewrite also blocks this path. PHP accepts this exception only for the exact supplied folder with the unchanged guard, explicit opt-in and Apache hosting. Other public directories remain rejected. The built-in PHP development server does not support this mode.
+
+Before using the folder on the host, verify that `/analytics-private/` and `/analytics-private/.htaccess` return HTTP 403. After the first successful dashboard refresh, `/analytics-private/analytics.csv` must also return 403. Apache must honor `.htaccess` (`AllowOverride`); file presence alone cannot prove the live server enforces it. If these checks fail, use an external private folder instead. Existing data in a previous folder is not moved automatically.
+
+The real Apache/PHP integration test is `node academic_website/tools/test_apache_storage.cjs` (defaults to the Windows XAMPP paths; `APACHE_BIN` and `PHP_BIN` can override them).
+
 Tracking starts only after visitor consent. Referring domains (without URL query strings), browser user agent, truncated IP networks, approximate active tab duration, publication/BibTeX actions, visible sections, scroll milestones and known data-loading failures are collected. Each page load is a separate visit; this does not identify unique people. Browser privacy signals disable collection. Visitors can withdraw using the footer's statistics settings; withdrawal stops future collection. Consent was versioned for the expanded collection, so earlier consent does not silently opt visitors into the new event tracking. Visit/event details expire after 30 days and are deleted on subsequent analytics requests or scheduled sync. Monthly totals without visit identifiers or IPs are retained for 24 months. No geographic location is inferred. The dashboard displays up to 1,000 recent visit details; engagement, referral conversion and overall metrics use all retained records.
 
 `full_ip` can explicitly enable full addresses; the consent text adjusts accordingly. The direct connection IP is used; behind a reverse proxy this may be the proxy address. Forwarded headers are not trusted automatically. Include the actual analytics setup in the site's privacy notice before enabling it publicly. Basic authentication requires HTTPS in production; close the private browser session to clear cached login credentials.

@@ -60,7 +60,7 @@ try {
             'CSV storage invalid' => ['CSV_INVALID', 'Die Statistik-CSV ist beschädigt. Datei sichern und prüfen; sie wird nicht überschrieben.'],
             'CSV storage busy' => ['CSV_BUSY', 'Die Statistikdatei wird gerade geschrieben. Kurz warten und erneut aktualisieren.'],
             'Storage unavailable' => ['STORAGE_NOT_WRITABLE', 'Der Statistikordner kann nicht angelegt oder beschrieben werden. data_dir und PHP-Schreibrechte prüfen.'],
-            'Storage must be outside document root' => ['STORAGE_PUBLIC', 'data_dir liegt im öffentlichen Webverzeichnis. Einen beschreibbaren Ordner außerhalb des DocumentRoot konfigurieren.'],
+            'Storage must be outside document root' => ['STORAGE_PUBLIC', 'data_dir liegt im öffentlichen Webverzeichnis. Einen privaten Ordner verwenden oder analytics-private mit protected_storage und der mitgelieferten Apache-Zugriffssperre einrichten.'],
             'Publication data unavailable' => ['PUBLICATIONS_MISSING', 'Die Datei academic_website/data/publications.json fehlt, ist nicht lesbar oder enthält keine gültige Publikationsliste.'],
         ];
         [$code, $message] = $messages[$error->getMessage()] ?? ['ANALYTICS_ERROR', 'Die Statistik konnte nicht geladen werden. PHP-Fehlerprotokoll, CSV-Datei und vollständig hochgeladene Dateien prüfen.'];

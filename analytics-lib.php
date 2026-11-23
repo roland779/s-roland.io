@@ -15,7 +15,17 @@ function analyticsStorage(array $config): AnalyticsCsvStore {
     $public = !empty($_SERVER['DOCUMENT_ROOT']) ? (realpath($_SERVER['DOCUMENT_ROOT']) ?: __DIR__) : __DIR__;
     foreach (array_unique([$public, __DIR__]) as $root) {
         $a = strtolower(str_replace('\\', '/', $resolved)); $b = strtolower(rtrim(str_replace('\\', '/', $root), '/'));
-        if ($a === $b || str_starts_with($a . '/', $b . '/')) throw new RuntimeException('Storage must be outside document root');
+        if ($a === $b || str_starts_with($a . '/', $b . '/')) {
+            // Explicit Apache-only option for hosts that deny writes above the website.
+            $protected = realpath(__DIR__ . '/analytics-private');
+            $guard = $resolved . '/.htaccess';
+            $apache = stripos($_SERVER['SERVER_SOFTWARE'] ?? '', 'Apache') !== false;
+            if (($config['protected_storage'] ?? false) !== true || $protected !== $resolved
+                || (!$apache && PHP_SAPI !== 'cli') || !is_file($guard)
+                || trim((string)file_get_contents($guard)) !== 'Require all denied') {
+                throw new RuntimeException('Storage must be outside document root');
+            }
+        }
     }
     $store = new AnalyticsCsvStore($resolved);
     $store->update(static function (array &$t): void { cleanAnalytics($t); });

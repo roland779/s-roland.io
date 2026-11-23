@@ -3,6 +3,7 @@ DirectoryIndex index.php index.html
 # Route existing index.html links through PHP when Apache mod_rewrite is available.
 <IfModule mod_rewrite.c>
     RewriteEngine On
+    RewriteRule ^analytics-private(?:/|$) - [F,END]
     RewriteRule ^admin/?$ admin.php [END]
     RewriteRule ^index\.html$ index.php [END]
 </IfModule>

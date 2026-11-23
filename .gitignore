@@ -7,6 +7,7 @@ __pycache__/
 
 # Local analytics credentials and runtime storage
 analytics-config.php
-analytics-private/
+analytics-private/*
+!analytics-private/.htaccess
 *.sqlite3
 *.sqlite3-*
