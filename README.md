@@ -11,7 +11,7 @@ This repository contains a minimal, multilingual (EN/DE) static personal profile
 
 ## PHP visitor statistics
 
-The protected dashboard is at `/admin.php` (username `admin`). This feature uses PHP 8+ and PDO SQLite; no Python server is involved. Existing Python publication utilities are independent of analytics.
+The protected dashboard is at `/admin.php` (username `admin`). This feature uses PHP 8+ and an atomic CSV file; no database extension or Python server is required. Existing Python publication utilities are independent of analytics. GitHub Pages can serve the static profile but cannot execute the PHP statistics; use a PHP-capable host for analytics.
 
 ### Hosting diagnostics
 
@@ -21,13 +21,12 @@ If the dashboard cannot load statistics, the API now returns a specific, authent
 
 | Code | Action |
 | --- | --- |
-| `SQLITE_MISSING` | Enable PHP's `pdo_sqlite` extension in the hosting panel or ask the host. |
+| `CSV_INVALID` | Back up and inspect the statistics CSV. Invalid files are rejected without overwriting them. |
 | `STORAGE_NOT_WRITABLE` | Set `data_dir` to an existing/writable private directory or grant PHP permission to create it. |
 | `STORAGE_PUBLIC` | Move `data_dir` outside the server's actual DocumentRoot, not merely outside a website subfolder. |
-| `DATABASE_NOT_WRITABLE` | Check permissions for both the database file and its containing directory. |
-| `DATABASE_BUSY` | Wait briefly and refresh. |
+| `CSV_BUSY` | Wait briefly and refresh. Storage waits up to 30 seconds for competing PHP processes. |
 | `PUBLICATIONS_MISSING` / `PUBLICATIONS_INVALID` | Upload a readable, valid `academic_website/data/publications.json`. |
-| `DATABASE_ERROR` / `ANALYTICS_ERROR` | Check the PHP error log and ensure all application files were uploaded in the same version. |
+| `ANALYTICS_ERROR` | Check the PHP error log and ensure all application files, including analytics-csv.php, were uploaded in the same version. |
 
 Diagnostics do not expose password hashes or absolute server paths. The PHP log records the diagnostic code. The generic message `Analytics storage unavailable` from an older API does not establish the underlying cause; upload the updated API and library to obtain the specific code. The aggregate dashboard hides disabled visitor metrics even when its API fails.
 
@@ -47,7 +46,7 @@ Set `analytics_mode` to `detailed` only if you want to restore individual metric
 
 1. Copy `analytics-config.example.php` to `analytics-config.php`.
 2. Generate a strong password hash using the command in that file and set `password_hash`. Keep the configured file out of Git.
-3. Set `data_dir` to a PHP-writable directory **outside your public document root**. PHP creates the SQLite database there. Enable the `pdo_sqlite` PHP extension.
+3. Set `data_dir` to a PHP-writable directory **outside your public document root**. PHP creates `analytics.csv` and its lock files there. Upload `analytics-csv.php` alongside `analytics-lib.php`.
 4. Serve the website through your PHP hosting with HTTPS. For local development use `php -S 127.0.0.1:8000` from this directory, then open `http://127.0.0.1:8000/admin.php`.
 
 Tracking starts only after visitor consent. Referring domains (without URL query strings), browser user agent, truncated IP networks, approximate active tab duration, publication/BibTeX actions, visible sections, scroll milestones and known data-loading failures are collected. Each page load is a separate visit; this does not identify unique people. Browser privacy signals disable collection. Visitors can withdraw using the footer's statistics settings; withdrawal stops future collection. Consent was versioned for the expanded collection, so earlier consent does not silently opt visitors into the new event tracking. Visit/event details expire after 30 days and are deleted on subsequent analytics requests or scheduled sync. Monthly totals without visit identifiers or IPs are retained for 24 months. No geographic location is inferred. The dashboard displays up to 1,000 recent visit details; engagement, referral conversion and overall metrics use all retained records.
@@ -60,7 +59,7 @@ Run the PHP integration checks with `node academic_website/tools/test_analytics.
 
 The dashboard includes publication actions (DOI, publisher/preprint/fulltext links, research data and BibTeX), referring-source conversion, viewed sections, scroll milestones, data-loading failures, external link checks and calendar-month comparisons. A BibTeX click records a requested action, not proof of a successful copy/download or a real scholarly citation. The existing publication JSON's `citationKey` is the stable identifier; do not rename it when editing titles.
 
-Use **OpenAlex & Zenodo abrufen** in the dashboard to populate external data. Requests run on the PHP server, never in visitor browsers. OpenAlex works are matched by DOI and cited works include title, year and DOI where available. Up to 1,000 citing works are fetched across multiple pages; a larger result is explicitly marked incomplete. Zenodo statistics show cumulative views and downloads for the linked record version, including traffic outside this website. Optional `openalex_api_key` in the private config supports higher API budgets. PHP needs `curl`, outbound HTTPS access and working CA certificates in addition to PDO SQLite.
+Use **OpenAlex & Zenodo abrufen** in the dashboard to populate external data. Requests run on the PHP server, never in visitor browsers. OpenAlex works are matched by DOI and cited works include title, year and DOI where available. Up to 1,000 citing works are fetched across multiple pages; a larger result is explicitly marked incomplete. Zenodo statistics show cumulative views and downloads for the linked record version, including traffic outside this website. Optional `openalex_api_key` in the private config supports higher API budgets. PHP needs `curl`, outbound HTTPS access and working CA certificates.
 
 Each successful citation fetch saves a daily snapshot. Monthly net changes compare the last observed total in adjacent calendar months, not the actual date a paper was cited; negative corrections remain visible. Missing baselines and incomplete source coverage are shown as unavailable, never fabricated as zero. The first snapshot establishes the baseline; historical monthly counts cannot be reconstructed retrospectively from today's total. Monthly visitor/action charts show observed totals and label collection start and incomplete periods. Research snapshots contain public publication metadata and remain available independently of the 30-day visitor retention.
 
@@ -84,6 +83,7 @@ Additional checks:
 
 ```text
 php academic_website/tools/test_research.php
+php academic_website/tools/test_csv.php
 node academic_website/tools/test_admin_model.cjs
 node academic_website/tools/test_tracker.cjs
 node academic_website/tools/test_concurrency.cjs
@@ -92,7 +92,7 @@ node academic_website/tools/test_browser.cjs
 
 Research tests use deterministic API fixtures for pagination, failure preservation, snapshots and Zenodo response formats. Browser tests use an isolated PHP server/database, mocked external research records and headless Chrome (`BROWSER_BIN` can select another Chromium executable). Set `QA_DIR` to an output directory to keep desktop/mobile screenshots. They do not access or alter the real analytics database or admin credentials. External live data depends on the hosting server's network/API access.
 
-Concurrency tests start eight actual PHP processes against a temporary SQLite database, verify first-time migration and aggregate writes, and check that simultaneous refreshes for one research source result in a single fetch. Tracker tests include delayed requests, tab changes, privacy signals, withdrawal and storage clearing in another tab. Manual and automatic source refreshes share per-source locks; an ongoing fetch is reported separately from an API failure.
+Concurrency tests start eight actual PHP processes against a temporary CSV store, verify first-time creation, 160 pageviews and 160 monthly event increments, and check that simultaneous refreshes for one research source result in a single fetch. CSV tests cover special characters, formula protection round trips, transaction rollback and corrupt-file preservation. Tracker tests include delayed requests, tab changes, privacy signals, withdrawal and storage clearing in another tab. Manual and automatic source refreshes share per-source locks; an ongoing fetch is reported separately from an API failure.
 
 If analytics is not configured or the site is served as static files, the existing profile remains usable and no analytics collection starts. Hosting must execute PHP, never serve PHP source as text.
 

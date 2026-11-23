@@ -4,7 +4,7 @@ const php=process.env.PHP_BIN||'php';
 const browser=process.env.BROWSER_BIN||'C:/Program Files/Google/Chrome/Application/chrome.exe';
 const root=path.resolve(__dirname,'../..'),temp=fs.mkdtempSync(path.join(os.tmpdir(),'research-browser-'));
 const publicDir=path.join(temp,'public');fs.mkdirSync(publicDir);
-for(const f of ['admin.php','analytics-api.php','analytics-lib.php','index.html','index.php'])fs.copyFileSync(path.join(root,f),path.join(publicDir,f));
+for(const f of ['admin.php','analytics-api.php','analytics-lib.php','analytics-csv.php','index.html','index.php'])fs.copyFileSync(path.join(root,f),path.join(publicDir,f));
 fs.cpSync(path.join(root,'academic_website'),path.join(publicDir,'academic_website'),{recursive:true});
 const password='browser-test-only-password';
 const config=spawnSync(php,[],{input:`<?php echo "<?php return ['password_hash'=>" . var_export(password_hash('${password}', PASSWORD_DEFAULT),true) . ", 'data_dir'=>__DIR__.'/../data', 'analytics_mode'=>'detailed', 'full_ip'=>false];";`,encoding:'utf8'});
@@ -23,15 +23,17 @@ async function screenshot(name){if(!process.env.QA_DIR)return;await evaluate('ne
  await retry(async()=>(await fetch(base+'/analytics-api.php?action=config')).ok);
  // Seed public research metadata only, using an isolated private database.
  const seed=spawnSync(php,[],{encoding:'utf8',env:{...process.env,ANALYTICS_TEST_ROOT:publicDir},input:`<?php
- require getenv('ANALYTICS_TEST_ROOT').'/analytics-lib.php';$config=require getenv('ANALYTICS_TEST_ROOT').'/analytics-config.php';$db=analyticsDatabase($config);
+ require getenv('ANALYTICS_TEST_ROOT').'/analytics-lib.php';$config=require getenv('ANALYTICS_TEST_ROOT').'/analytics-config.php';$db=analyticsStorage($config);
+ $db->update(static function(array &$t): void {
  foreach(publications() as $id=>$pub){
   $payload=['source'=>'OpenAlex','url'=>'https://openalex.org/W123','count'=>3,'listedTotal'=>1,'partial'=>false,'citing'=>[['title'=>'Citing <script>window.bad=true</script> work','year'=>2026,'doi'=>'https://doi.org/10.example/test','url'=>'https://openalex.org/W999']]];
-  $q=$db->prepare('INSERT INTO external VALUES (?,?,?,?,?,NULL)');$q->execute([$id,'citations',json_encode($payload),time(),time()]);
+  AnalyticsCsvStore::put($t,'external',['publication'=>$id,'kind'=>'citations','payload'=>$payload,'checked'=>time(),'success'=>time(),'error'=>null]);
   $payload=['source'=>'HTTP-Linkprüfung','links'=>[['name'=>'doi','url'=>$pub['links']['doi'],'status'=>200,'state'=>'erreichbar']]];
-  $q->execute([$id,'links',json_encode($payload),time(),time()]);
-  if(isset($pub['links']['zenodo'])){$q->execute([$id,'zenodo',json_encode(['source'=>'Zenodo','url'=>'https://zenodo.org/records/18086905','views'=>61,'downloads'=>5]),time(),time()]);}
-  $q=$db->prepare('INSERT INTO citation_snapshots VALUES (?,?,?)');$q->execute([$id,gmdate('Y-m-d'),3]);
+  AnalyticsCsvStore::put($t,'external',['publication'=>$id,'kind'=>'links','payload'=>$payload,'checked'=>time(),'success'=>time(),'error'=>null]);
+  if(isset($pub['links']['zenodo'])){AnalyticsCsvStore::put($t,'external',['publication'=>$id,'kind'=>'zenodo','payload'=>['source'=>'Zenodo','url'=>'https://zenodo.org/records/18086905','views'=>61,'downloads'=>5],'checked'=>time(),'success'=>time(),'error'=>null]);}
+  AnalyticsCsvStore::put($t,'citation_snapshots',['publication'=>$id,'day'=>gmdate('Y-m-d'),'count'=>3]);
  }
+ });
  `});assert.equal(seed.status,0,seed.stderr||seed.stdout);
  chrome=spawn(browser,['--headless=new','--no-sandbox','--disable-gpu','--no-first-run','--no-default-browser-check','--disable-background-networking',`--remote-debugging-port=${debugPort}`,`--user-data-dir=${path.join(temp,'chrome')}`,'about:blank'],{stdio:'ignore'});
  const pages=await retry(async()=>{const r=await fetch(`http://127.0.0.1:${debugPort}/json/list`);const list=await r.json();return list.find(p=>p.type==='page');});
@@ -99,7 +101,7 @@ async function screenshot(name){if(!process.env.QA_DIR)return;await evaluate('ne
  await command('Page.navigate',{url:base+'/admin/'});await waitFor(`document.querySelector('#status')?.textContent.includes('STORAGE_PUBLIC')`);
  assert.equal(await evaluate(`document.querySelector('#interest').hidden&&document.querySelector('#visitors').hidden&&document.querySelector('#sync-research').disabled`),true,'Aggregate mode and disabled controls survive API failure');
  fs.writeFileSync(path.join(publicDir,'analytics-config.php'),aggregateConfig);await evaluate(`document.querySelector('#refresh').click()`);await waitFor(`document.querySelector('#count')?.textContent==='1'`);
- const nested=path.join(publicDir,'nested');fs.mkdirSync(nested);for(const f of['admin.php','analytics-api.php','analytics-lib.php'])fs.copyFileSync(path.join(publicDir,f),path.join(nested,f));fs.cpSync(path.join(publicDir,'academic_website'),path.join(nested,'academic_website'),{recursive:true});
+ const nested=path.join(publicDir,'nested');fs.mkdirSync(nested);for(const f of['admin.php','analytics-api.php','analytics-lib.php','analytics-csv.php'])fs.copyFileSync(path.join(publicDir,f),path.join(nested,f));fs.cpSync(path.join(publicDir,'academic_website'),path.join(nested,'academic_website'),{recursive:true});
  fs.writeFileSync(path.join(nested,'analytics-config.php'),aggregateConfig.replace("__DIR__.'/../data'","dirname(__DIR__,2).'/data'"));
  for(const suffix of['/admin','/admin/','/nested/admin','/nested/admin/']){
   const before=requests.length;await command('Page.navigate',{url:base+suffix});await waitFor(`document.querySelector('#count')?.textContent==='1'`);

@@ -31,11 +31,11 @@ final class AnalyticsCsvStore {
     private function access(callable $callback, bool $write): mixed {
         $lock = @fopen($this->dir . '/analytics.lock', 'c');
         if (!$lock) throw new RuntimeException('Storage unavailable');
-        $deadline = microtime(true) + 5;
+        $deadline = microtime(true) + 30;
         try {
             while (!flock($lock, ($write ? LOCK_EX : LOCK_SH) | LOCK_NB)) {
                 if (microtime(true) >= $deadline) throw new RuntimeException('CSV storage busy');
-                usleep(10000);
+                usleep(random_int(10000, 30000));
             }
             $tables = $this->load();
             $result = $callback($tables);
@@ -65,7 +65,11 @@ final class AnalyticsCsvStore {
                 foreach (self::SCHEMA[$table] as $col) {
                     $v = $record[$col];
                     if ($col === 'payload') {
-                        $v = $v === '' ? null : json_decode($v, true, 512, JSON_THROW_ON_ERROR);
+                        try {
+                            $v = $v === '' ? null : json_decode($v, true, 512, JSON_THROW_ON_ERROR);
+                        } catch (JsonException $e) {
+                            throw new RuntimeException('CSV storage invalid', 0, $e);
+                        }
                         if ($v !== null && !is_array($v)) throw new RuntimeException('CSV storage invalid');
                     } elseif (in_array($col, ['count','checked','success','started','updated','seconds','created'], true)) {
                         if ($v === '' && in_array($col, ['checked','success'], true)) $v = null;

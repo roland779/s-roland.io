@@ -7,7 +7,7 @@ const php = process.env.PHP_BIN || 'php';
 const root = path.resolve(__dirname, '../..');
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'analytics-test-'));
 const publicDir = path.join(temp, 'public'); fs.mkdirSync(publicDir);
-for (const file of ['admin.php', 'analytics-api.php', 'analytics-lib.php', 'sync-analytics.php']) fs.copyFileSync(path.join(root,file), path.join(publicDir,file));
+for (const file of ['admin.php', 'analytics-api.php', 'analytics-lib.php', 'analytics-csv.php', 'sync-analytics.php']) fs.copyFileSync(path.join(root,file), path.join(publicDir,file));
 fs.mkdirSync(path.join(publicDir,'academic_website'));
 fs.mkdirSync(path.join(publicDir,'academic_website/data'));
 fs.copyFileSync(path.join(root,'academic_website/data/publications.json'),path.join(publicDir,'academic_website/data/publications.json'));
@@ -66,9 +66,11 @@ async function post(data, origin=base) { return fetch(base+'/analytics-api.php?a
   assert.equal((await fetch(base+'/analytics-api.php?action=visit',{method:'POST',headers:{Origin:base,'Content-Type':'application/json'},body:JSON.stringify({path:'/',extra:'x'.repeat(3000)})})).status,413);
   const unchanged=await(await fetch(base+'/analytics-api.php?action=stats',{headers:{Authorization:auth}})).json();assert.equal(unchanged.totals.visits,1,'Rejected payloads do not change visit totals');
   const expired=spawnSync(php,[],{encoding:'utf8',env:{...process.env,ANALYTICS_TEST_ROOT:publicDir},input:`<?php
-    require getenv('ANALYTICS_TEST_ROOT').'/analytics-lib.php';$config=require getenv('ANALYTICS_TEST_ROOT').'/analytics-config.php';$db=analyticsDatabase($config);$old=time()-31*86400;
-    $q=$db->prepare('INSERT INTO visits VALUES (?,?,?,?,?,?,?,?,?)');$q->execute(['expired',$old,$old,'/','old.example','127.0.0.0/24','test',10,'test']);
-    $q=$db->prepare('INSERT INTO events VALUES (?,?,?,?,?,?)');$q->execute(['expired',$old,'section','','research','old.example']);incrementMonth($db,'visit','','','old.example',$old);
+    require getenv('ANALYTICS_TEST_ROOT').'/analytics-lib.php';$config=require getenv('ANALYTICS_TEST_ROOT').'/analytics-config.php';$db=analyticsStorage($config);$old=time()-31*86400;
+    $db->update(static function(array &$t)use($old):void{
+      AnalyticsCsvStore::put($t,'visits',['id'=>'expired','started'=>$old,'updated'=>$old,'path'=>'/','referrer'=>'old.example','ip'=>'127.0.0.0/24','browser'=>'test','seconds'=>10,'peer'=>'test']);
+      AnalyticsCsvStore::put($t,'events',['event_id'=>'expired-event','visit'=>'expired','created'=>$old,'kind'=>'section','publication'=>'','target'=>'research','source'=>'old.example']);incrementMonth($t,'visit','','','old.example',$old);
+    });
   `});assert.equal(expired.status,0,expired.stderr||expired.stdout);
   const retained=await(await fetch(base+'/analytics-api.php?action=stats',{headers:{Authorization:auth}})).json();
   assert.equal(retained.totals.visits,1);assert.ok(!retained.reading.some(r=>r.kind==='section'&&r.target==='research'),'Expired details are deleted');assert.equal(retained.monthly.filter(r=>r.kind==='visit').reduce((n,r)=>n+r.count,0),2,'Monthly aggregate survives detail expiration');
@@ -79,15 +81,30 @@ async function post(data, origin=base) { return fetch(base+'/analytics-api.php?a
   fs.writeFileSync(path.join(publicDir,'analytics-config.php'),`<?php return ['password_hash'=>'${hash.stdout}', 'data_dir'=>__DIR__.'/unsafe-public-data', 'analytics_mode'=>'detailed', 'full_ip'=>false, 'automatic_refresh'=>false];`);
   assert.equal((await fetch(base+'/analytics-api.php?action=stats',{headers:{Authorization:auth}})).status,503,'Reject database storage in document root');
   const unsafe=await(await fetch(base+'/analytics-api.php?action=stats',{headers:{Authorization:auth}})).json();assert.equal(unsafe.code,'STORAGE_PUBLIC');assert.ok(!JSON.stringify(unsafe).includes(publicDir),'Diagnostics must not expose server paths');
-  fs.writeFileSync(path.join(publicDir,'analytics-config.php'),`<?php return ['password_hash'=>'${hash.stdout}', 'data_dir'=>__DIR__.'/../data/visits.sqlite3'];`);
+  fs.writeFileSync(path.join(publicDir,'../data/not-a-directory'),'fixture');
+  fs.writeFileSync(path.join(publicDir,'analytics-config.php'),`<?php return ['password_hash'=>'${hash.stdout}', 'data_dir'=>__DIR__.'/../data/not-a-directory'];`);
   const unwritable=await(await fetch(base+'/analytics-api.php?action=stats',{headers:{Authorization:auth}})).json();assert.equal(unwritable.code,'STORAGE_NOT_WRITABLE');
   fs.writeFileSync(path.join(publicDir,'analytics-config.php'),`<?php return ['password_hash'=>'${hash.stdout}', 'data_dir'=>__DIR__.'/../data'];`);
   const noSqlite=spawn(php,['-n','-S',`127.0.0.1:${port+1}`,'-t',publicDir],{stdio:'ignore'});
   try {
     let result;
     for(let i=0;i<50;i++){try{result=await fetch(`http://127.0.0.1:${port+1}/analytics-api.php?action=stats`,{headers:{Authorization:auth}});break;}catch(_){await new Promise(r=>setTimeout(r,100));}}
-    assert.ok(result);assert.equal(result.status,503);assert.equal((await result.json()).code,'SQLITE_MISSING','Diagnose missing hosting extension explicitly');
+    assert.ok(result);assert.equal(result.status,200);assert.equal((await result.json()).mode,'aggregate','CSV storage works without optional PHP extensions');
   } finally {noSqlite.kill();await new Promise(r=>noSqlite.once('exit',r));}
-  console.log('Passed: authentication/HEAD/cache headers, CLI-only tools, origin checks, malformed payload rejection, SQLite persistence, masked/full IP, bounded duration, attribution, monthly aggregates, section/depth/errors, detail expiry and private storage enforcement.');
+  const csvFile=path.join(temp,'data/analytics.csv'),original=fs.readFileSync(csvFile);
+  try {
+    // A malformed JSON payload belongs to CSV diagnostics, not publication JSON diagnostics.
+    const corrupt=spawnSync(php,[],{encoding:'utf8',env:{...process.env,AUDIT_CSV:csvFile},input:`<?php
+      $f=fopen(getenv('AUDIT_CSV'),'r');$header=fgetcsv($f,null,',','"','');fclose($f);
+      $row=array_fill_keys($header,'');$row['table']='external';$row['publication']='paper';$row['kind']='citations';$row['payload']='{broken';$row['checked']='1';$row['success']='1';
+      $f=fopen(getenv('AUDIT_CSV'),'w');fputcsv($f,$header,',','"','');fputcsv($f,array_values($row),',','"','');fclose($f);
+    `});assert.equal(corrupt.status,0,corrupt.stderr);
+    const damaged=fs.readFileSync(csvFile);
+    const response=await fetch(base+'/analytics-api.php?action=stats',{headers:{Authorization:auth}});
+    assert.equal(response.status,503);assert.equal((await response.json()).code,'CSV_INVALID');
+    assert.deepEqual(fs.readFileSync(csvFile),damaged,'Invalid CSV must never be overwritten');
+  } finally {fs.writeFileSync(csvFile,original);}
+  assert.equal((await fetch(base+'/analytics-api.php?action=stats',{headers:{Authorization:auth}})).status,200,'Restored CSV can be read again');
+  console.log('Passed: authentication/HEAD/cache headers, CLI-only tools, origin checks, malformed payload rejection, CSV persistence without extensions, masked/full IP, bounded duration, attribution, monthly aggregates, section/depth/errors, detail expiry, private storage enforcement and corruption preservation/recovery.');
  } finally { server.kill(); await new Promise(r=>server.once('exit',r));fs.rmSync(temp,{recursive:true,force:true}); }
 })().catch(e=>{console.error(e);process.exitCode=1;});
