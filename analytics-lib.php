@@ -38,6 +38,7 @@ function cleanAnalytics(array &$t): void {
     $month = (new DateTimeImmutable('first day of this month', new DateTimeZone('UTC')))->modify('-23 months')->format('Y-m');
     $t['pageviews_daily'] = array_filter($t['pageviews_daily'], static fn($r) => $r['day'] >= $day);
     $t['monthly'] = array_filter($t['monthly'], static fn($r) => $r['month'] >= $month);
+    $t['zenodo_snapshots'] = array_filter($t['zenodo_snapshots'], static fn($r) => substr($r['day'],0,7) >= $month);
     $t['visits'] = array_filter($t['visits'], static fn($r) => $r['started'] >= $now - 30 * 86400);
     $ids = array_column($t['visits'], 'id');
     $t['events'] = array_filter($t['events'], static fn($r) => $r['created'] >= $now - 30 * 86400 && in_array($r['visit'], $ids, true));
@@ -137,7 +138,7 @@ function analyticsStats(AnalyticsCsvStore $store, array $config): array {
         $startKey=AnalyticsCsvStore::key([$mode==='aggregate'?'aggregate_start':'monthly_start']);
         return ['mode'=>$mode,'visits'=>$mode==='aggregate'?[]:array_slice($visits,0,1000),'totals'=>['visits'=>$mode==='aggregate'?array_sum(array_column($daily,'count')):count($visits),'average'=>$mode==='aggregate'?null:(count($visits)?$sum/count($visits):0),'total'=>$mode==='aggregate'?null:$sum],
             'retentionDays'=>30,'fullIp'=>$mode==='detailed'&&!empty($config['full_ip']),'publications'=>$pubs,'monthly'=>$mode==='aggregate'?array_values(array_filter($monthly,static fn($r)=>$r['kind']==='pageview')):$monthly,
-            'trackingStarted'=>(int)($t['meta'][$startKey]['value']??time()),'daily'=>$daily,'external'=>AnalyticsCsvStore::rows($t,'external'),'snapshots'=>$snapshots,
+            'trackingStarted'=>(int)($t['meta'][$startKey]['value']??time()),'daily'=>$daily,'external'=>AnalyticsCsvStore::rows($t,'external'),'snapshots'=>$snapshots,'zenodoSnapshots'=>AnalyticsCsvStore::rows($t,'zenodo_snapshots'),
             'engagement'=>$mode==='aggregate'?[]:array_values($engagement),'reading'=>$mode==='aggregate'?[]:array_values($reading),'conversion'=>$mode==='aggregate'?[]:array_values($conversion)];
     });
 }
@@ -276,6 +277,7 @@ function refreshResearch(AnalyticsCsvStore $store, array $config, string $pubId,
             $store->update(static function(array &$t)use($pubId,$kind,$payload,$now):void{
                 AnalyticsCsvStore::put($t,'external',['publication'=>$pubId,'kind'=>$kind,'payload'=>$payload,'checked'=>$now,'success'=>$now,'error'=>null]);
                 if($kind==='citations')AnalyticsCsvStore::put($t,'citation_snapshots',['publication'=>$pubId,'day'=>gmdate('Y-m-d',$now),'count'=>$payload['count']]);
+                if($kind==='zenodo')AnalyticsCsvStore::put($t,'zenodo_snapshots',['publication'=>$pubId,'day'=>gmdate('Y-m-d',$now),'payload'=>$payload]);
             });
             return ['ok'=>true];
         } catch(Throwable $e) {

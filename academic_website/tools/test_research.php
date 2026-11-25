@@ -51,6 +51,18 @@ $fail=static fn()=>['status'=>429,'body'=>'{}'];
 $result=refreshResearch($db,[],'SchreiberZylka2020','citations',$fail,true);check(!$result['ok'],'API failure is explicit');
 $row=rows($db,'external')[0];check($row['payload']['count']===152&&!empty($row['error'])&&!empty($row['success']),'Keep last successful data on failure');
 check(count(rows($db,'citation_snapshots'))===1,'API errors must not create zero snapshots');
+check(refreshResearch($db,[],'SchreiberWieland2026','zenodo',$mock,true)['ok'],'Zenodo refresh succeeds');
+check(rows($db,'zenodo_snapshots')[0]['payload']['downloads']===5,'Persist Zenodo history without changing CSV columns');
+refreshResearch($db,[],'SchreiberWieland2026','zenodo',$modern,true);
+check(count(rows($db,'zenodo_snapshots'))===1&&rows($db,'zenodo_snapshots')[0]['payload']['downloads']===3,'Replace same-day snapshot');
+refreshResearch($db,[],'SchreiberWieland2026','zenodo',$fail,true);
+check(rows($db,'zenodo_snapshots')[0]['payload']['downloads']===3,'Failure preserves Zenodo history');
+$db->update(static function(array &$t):void{
+    $old=(new DateTimeImmutable('first day of this month',new DateTimeZone('UTC')))->modify('-24 months')->format('Y-m-d');
+    AnalyticsCsvStore::put($t,'zenodo_snapshots',['publication'=>'expired','day'=>$old,'payload'=>['views'=>1,'downloads'=>1]]);
+    cleanAnalytics($t);
+});
+check(count(rows($db,'zenodo_snapshots'))===1,'Expire Zenodo snapshots outside the 24-month window');
 check(!empty(refreshResearch($db,[],'SchreiberZylka2020','citations',$mock)['cached']),'Throttle refresh within an hour');
 $badDoi=static fn()=>['status'=>200,'body'=>json_encode(['id'=>'https://openalex.org/W123','doi'=>'https://doi.org/wrong','cited_by_count'=>8])];
 try { fetchCitations($pub,[],$badDoi);throw new LogicException('Wrong DOI accepted'); }catch(RuntimeException $e){}

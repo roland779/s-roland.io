@@ -9,12 +9,14 @@ final class AnalyticsCsvStore {
         'meta' => ['key','value'],
         'external' => ['publication','kind','payload','checked','success','error'],
         'citation_snapshots' => ['publication','day','count'],
+        'zenodo_snapshots' => ['publication','day','payload'],
         'visits' => ['id','started','updated','path','referrer','ip','browser','seconds','peer'],
         'events' => ['event_id','visit','created','kind','publication','target','source'],
     ];
     private const PRIMARY = [
         'pageviews_daily'=>['day'], 'monthly'=>['month','kind','publication','target','source'],
         'meta'=>['key'], 'external'=>['publication','kind'], 'citation_snapshots'=>['publication','day'],
+        'zenodo_snapshots'=>['publication','day'],
         'visits'=>['id'], 'events'=>['event_id'],
     ];
     private string $dir;

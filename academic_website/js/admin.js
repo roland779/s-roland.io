@@ -1,5 +1,6 @@
 ﻿(() => {
-  let data, busy = false, apiAvailable = false, monthlyChart;
+  let data, busy = false, apiAvailable = false, monthlyChart, dailyChart;
+  let researchCharts=[];
   const el = id => document.getElementById(id);
   const apiBase = new URL(document.querySelector('meta[name="analytics-base"]')?.content || './', location.href);
   const apiUrl = action => new URL(`analytics-api.php?action=${action}`, apiBase).href;
@@ -46,15 +47,38 @@
     const aggregate=data.mode==='aggregate',rows=ResearchMetrics.monthly(data).slice(-Number(el('chart-range').value));
     table(el('monthly-data'),['Monat (UTC)',aggregate?'Seitenaufrufe':'Besuche',...(!aggregate?['Publikationsaktionen']:[]),'Zitations-Nettoänderung'],rows.map(r=>[r.month,r.visits??'Nicht erfasst',...(!aggregate?[r.clicks??'Nicht erfasst']:[]),signed(r.citations)]));
     monthlyChart?.destroy();monthlyChart=undefined;
-    const any=rows.some(r=>Number(r.visits)>0||Number(r.clicks)>0||r.citations!==null);
-    el('chart-message').textContent=any?'Serien über die Legende ein- und ausblenden. Details erscheinen beim Zeigen auf einen Messpunkt. Werte sind auch als Tabelle verfügbar.':'Noch keine Daten erfasst. Sobald Aufrufe oder vergleichbare Zitationsstände vorliegen, erscheint hier der Monatsverlauf.';
+    const any=rows.some(r=>r.visits!==null&&(r.visits>0||data.mode==='aggregate')||r.clicks>0);
+    el('chart-message').textContent=any?'Serien über die Legende ein- und ausblenden. Details erscheinen beim Zeigen auf einen Messpunkt. Werte sind auch als Tabelle verfügbar.':'Noch keine Daten erfasst. Sobald Aufrufe vorliegen, erscheint hier der Monatsverlauf.';
     if(!window.Chart){el('monthly-chart').hidden=true;el('chart-message').textContent='Das Diagramm ist nicht verfügbar. Alle Monatswerte stehen in der Tabelle darunter.';return;}
     el('monthly-chart').hidden=!any;if(!any)return;
     const datasets=[{label:aggregate?'Seitenaufrufe':'Besuche',data:rows.map(r=>r.visits),backgroundColor:'#3869cf',borderRadius:4,maxBarThickness:34}];
     if(!aggregate)datasets.push({label:'Publikationsaktionen',data:rows.map(r=>r.clicks),backgroundColor:'#27948a',borderRadius:4,maxBarThickness:34});
-    datasets.push({type:'line',label:'Zitations-Nettoänderung',data:rows.map(r=>r.citations),borderColor:'#8b65bf',backgroundColor:'#8b65bf',pointRadius:4,tension:.25,yAxisID:'citations',spanGaps:false});
-    monthlyChart=new Chart(el('monthly-canvas'),{type:'bar',data:{labels:rows.map(r=>r.month),datasets},options:{responsive:true,maintainAspectRatio:false,animation:false,interaction:{mode:'index',intersect:false},plugins:{legend:{position:'bottom',labels:{usePointStyle:true,padding:22,color:'#4a5b71',font:{family:'system-ui',size:12}}},tooltip:{filter:item=>item.raw!==null}},scales:{x:{grid:{display:false},ticks:{color:'#62738a',maxRotation:0,maxTicksLimit:6}},y:{beginAtZero:true,ticks:{precision:0,color:'#62738a'},grid:{color:'#edf0f5'}},citations:{position:'right',beginAtZero:true,grid:{drawOnChartArea:false},ticks:{precision:0,color:'#80619e'},title:{display:true,text:'Zitationsänderung',color:'#80619e'}}}}});
+    const current=rows.at(-1).month;
+    datasets[0].backgroundColor=rows.map(r=>r.month===current?'#a5bce9':'#3869cf');
+    monthlyChart=new Chart(el('monthly-canvas'),{type:'bar',data:{labels:rows.map(r=>new Date(r.month+'-01T00:00:00Z').toLocaleDateString('de-DE',{month:'short',year:'numeric',timeZone:'UTC'})+(r.month===current?' · laufend':'')),datasets},options:chartOptions()});
   }
+  function chartOptions(){return {responsive:true,maintainAspectRatio:false,animation:false,interaction:{mode:'index',intersect:false},plugins:{legend:{position:'bottom'},tooltip:{filter:i=>i.raw!==null}},scales:{x:{grid:{display:false},ticks:{maxRotation:0,maxTicksLimit:6}},y:{beginAtZero:true,ticks:{precision:0},grid:{color:'#edf0f5'}}}};}
+  function renderDaily(){
+    const aggregate=data.mode==='aggregate';el('daily-panel').hidden=!aggregate;
+    dailyChart?.destroy();dailyChart=undefined;if(!aggregate)return;
+    const rows=ResearchMetrics.daily(data,new Date(),Number(el('daily-range').value)),today=new Date().toISOString().slice(0,10);
+    table(el('daily-data'),['Tag (UTC)','Seitenaufrufe','7-Tage-Mittel'],rows.map(r=>[r.day,r.count??'Nicht erfasst',r.day===today||r.average===null?'–':r.average.toLocaleString('de-DE',{maximumFractionDigits:1})]));
+    el('daily-chart').hidden=!window.Chart;if(!window.Chart)return;
+    const datasets=[{label:'Seitenaufrufe',data:rows.map(r=>r.count),backgroundColor:rows.map(r=>r.day===today?'#a5bce9':'#3869cf'),borderRadius:4,maxBarThickness:30}];
+    if(el('daily-average').checked)datasets.push({type:'line',label:'7-Tage-Mittel',data:rows.map(r=>r.day===today?null:r.average),borderColor:'#167d76',backgroundColor:'#167d76',pointRadius:0,borderWidth:2,spanGaps:false});
+    dailyChart=new Chart(el('daily-canvas'),{type:'bar',data:{labels:rows.map(r=>new Date(r.day+'T00:00:00Z').toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',timeZone:'UTC'})+(r.day===today?' · heute':'')),datasets},options:chartOptions()});
+  }
+  function historyChart(container,labels,datasets,description){
+    container.append(node('p',description));
+    const first=labels.findIndex((_,i)=>datasets.some(d=>d.data[i]!==null));
+    if(first<0){const note=node('p','Noch keine vergleichbaren Messstände verfügbar.');note.className='note';container.append(note);return;}
+    if(!window.Chart)return;
+    labels=labels.slice(first);datasets=datasets.map(d=>({...d,data:d.data.slice(first)}));
+    labels=labels.map(value=>new Date(value+(value.length===7?'-01':'')+'T00:00:00Z').toLocaleDateString('de-DE',{...(value.length===7?{}:{day:'2-digit'}),month:'short',year:'numeric',timeZone:'UTC'}));
+    const wrap=node('div'),canvas=node('canvas');wrap.className='chart-container';canvas.setAttribute('role','img');canvas.setAttribute('aria-label',description+' Werte in der folgenden Tabelle.');wrap.append(canvas);container.append(wrap);
+    researchCharts.push(new Chart(canvas,{type:'line',data:{labels,datasets:datasets.map(d=>({...d,backgroundColor:d.borderColor,pointRadius:3,stepped:true,spanGaps:false}))},options:chartOptions()}));
+  }
+
   function showHelp(code){
     const help={
       STORAGE_NOT_WRITABLE:['PHP kann den Statistikordner nicht beschreiben.',['data_dir in analytics-config.php prüfen.','Für den Unterordner analytics-private: protected_storage aktivieren und dessen .htaccess mit hochladen.','Ordner und vorhandene CSV-/Sperrdateien müssen für den PHP-Benutzer beschreibbar sein.']],
@@ -67,12 +91,14 @@
   }
   function renderCitations() {
     const pub=el('publication-filter').value;
-    const container=el('citations-content');container.replaceChildren();
+    const container=el('citations-content');for(const canvas of container.querySelectorAll('canvas')){const chart=window.Chart?.getChart(canvas);chart?.destroy();researchCharts=researchCharts.filter(c=>c!==chart);}container.replaceChildren();
     const row=external(pub,'citations');metadata(container,row);
     if(!row?.payload){const empty=node('p','Noch keine Daten erfasst. Über „Datenquellen“ OpenAlex für diese Publikation aktualisieren.');empty.className='empty';container.append(empty);return;}
     const p=row.payload;
     const title=node('h3',`${p.count} Zitationen laut OpenAlex`);container.append(title,link('Quelle in OpenAlex',p.url));
-    const history=ResearchMetrics.citationMonths(data.snapshots,pub,ResearchMetrics.months());
+    const history=ResearchMetrics.citationMonths(data.snapshots,pub,ResearchMetrics.months(new Date(),24));
+    historyChart(container,history.map(r=>r.month),[{label:'Zitationen gesamt',data:history.map(r=>r.count),borderColor:'#8060b0'}],'Zitationsstand · letzte 24 Monate');
+    historyChart(container,history.map(r=>r.month),[{label:'Nettoänderung',data:history.map(r=>r.delta),borderColor:'#167d76'}],'Änderung gegenüber dem Vormonatsstand');
     const chart=node('div');chart.className='table-wrap';container.append(node('h3','Entwicklung je Monat'),chart);
     table(chart,['Monat (UTC)','Letzter erfasster Stand','Zitationen gesamt','Nettoänderung zum Vormonatsstand'],history.filter(h=>h.count!==null).map(h=>[h.month,h.day,h.count,signed(h.delta)]));
     container.append(node('p','Die erste Messung ist der Ausgangsstand. „Neue Zitationen“ sind hier Änderungen der Datenbankzählung; Nachindexierung und Korrekturen können spätere Änderungen verursachen.'));
@@ -83,6 +109,7 @@
   }
   function applyMode(mode) {
     const aggregate = mode !== 'detailed';
+    el('daily-panel').hidden=!aggregate;document.querySelector('.admin-nav a[href="#daily-panel"]').hidden=!aggregate;
     for (const id of ['interest','reading','visitors','error-tracking']) el(id).hidden = aggregate;
     for (const id of ['interest','reading','visitors']) document.querySelector(`.admin-nav a[href="#${id}"]`).hidden = aggregate;
     for (const id of ['average','actions']) el(id).closest('.metric').hidden = aggregate;
@@ -92,6 +119,7 @@
     el('mode-note').textContent = aggregate ? 'Serverseitige Aufrufzählung ohne gespeicherte IP-Adressen, Browserdaten oder Besucherkennungen. Gezählt werden Seitenabrufe, einschließlich möglicher Bots und wiederholter Abrufe. Keine Messung einzelner Besuche, Klicks oder Lesetiefe. Zitationen und Zenodo-Daten bleiben unabhängig davon verfügbar.' : 'Besuchsdaten stammen ausschließlich aus zugestimmten Erfassungen. Ein Besuch ist ein Seitenaufruf, keine eindeutige Person. Klicks zeigen Interesse; BibTeX-Aktionen belegen keine wissenschaftliche Zitation.';
   }
   function render() {
+    researchCharts.forEach(c=>c.destroy());researchCharts=[];
     const aggregate = data.mode === 'aggregate';
     applyMode(data.mode);
     el('count').textContent=data.totals.visits;el('average').textContent=duration(data.totals.average);
@@ -105,16 +133,16 @@
     el('zenodo-downloads-note').textContent=zenodo.length?'Kumuliert · verlinkte Versionen':'Noch keine Daten erfasst';
     el('status').textContent=`Aktualisiert · Besuchsdetails: ${data.retentionDays} Tage · ${data.fullIp?'Vollständige':'Gekürzte'} IP-Adressen · Monatsaggregate: 24 Monate`;
     if (aggregate) el('status').textContent = 'Aktualisiert · Reine Aufrufzählung · Tageszahlen: 30 Kalendertage · Monatszahlen: 24 Monate';
-    const rows=ResearchMetrics.monthly(data);const current=rows.at(-1),previous=rows.at(-2);
+    const rows=ResearchMetrics.monthly(data);const current=rows.at(-2),previous=rows.at(-3);
     const started=new Date(data.trackingStarted*1000).toISOString().slice(0,10);
-    el('coverage').textContent=`Monatserfassung aktiviert am ${started}. Monate vor Beginn sind nicht vollständig erfasst. Der laufende Monat wird mit dem gesamten Vormonat verglichen; die Zeiträume sind unterschiedlich lang.`;
-    table(el('comparison-table'),['Kennzahl',`${previous.month} · abgeschlossen`,`${current.month} · laufend`,'Differenz'],[
+    el('coverage').textContent=`Monatserfassung aktiviert am ${started}. Monate vor Beginn sind nicht vollständig erfasst. Die Vergleichstabelle zeigt die letzten beiden abgeschlossenen Monate. Der laufende Monat ist im Diagramm heller markiert.`;
+    table(el('comparison-table'),['Kennzahl',`${previous.month} · abgeschlossen`,`${current.month} · abgeschlossen`,'Differenz'],[
       [aggregate?'Seitenaufrufe':'Besuche',previous.visits??'Nicht erfasst',current.visits??'Nicht erfasst',previous.visits===null||current.visits===null?'Nicht verfügbar':signed(current.visits-previous.visits)],
       ...(!aggregate ? [['Publikationsaktionen',previous.clicks??'Nicht erfasst',current.clicks??'Nicht erfasst',previous.clicks===null||current.clicks===null?'Nicht verfügbar':signed(current.clicks-previous.clicks)]] : []),
       ['Zitations-Nettoänderung',signed(previous.citations),signed(current.citations),current.citations===null||previous.citations===null?'Nicht verfügbar':signed(current.citations-previous.citations)]
     ]);
     el('comparison').querySelector('h3').textContent = aggregate ? 'Seitenaufrufe nach Monat' : 'Besuche und Publikationsaktionen nach Monat';
-    renderMonthlyChart();renderSources();
+    renderMonthlyChart();renderDaily();renderSources();
     const targets=['doi','fulltext','data','bibtex-copy','bibtex-download','other'];
     const grouped=data.publications.map(p=>{const counts=Object.fromEntries(targets.map(t=>[t,0]));for(const r of data.engagement.filter(r=>r.publication===p.citationKey)){const t=r.target;const group=t==='doi'?t:['publisher','igi','acm','ssrn','pdf','fulltext'].includes(t)?'fulltext':['zenodo','data','dataset'].includes(t)?'data':targets.includes(t)?t:'other';counts[group]+=Number(r.clicks);}return[p.title,...targets.map(t=>counts[t])];});
     table(el('interest-table'),['Publikation','DOI','Volltext / Verlag / Preprint','Datenpaket','BibTeX kopieren','BibTeX Download','Weitere Links'],grouped);
@@ -122,7 +150,10 @@
     const select=el('publication-filter'),selected=select.value;select.replaceChildren();
     for(const p of data.publications){const option=node('option',p.title);option.value=p.citationKey;select.append(option);}if(data.publications.some(p=>p.citationKey===selected))select.value=selected;renderCitations();
     const datasets=el('zenodo-content');datasets.replaceChildren();
-    for(const p of data.publications.filter(p=>p.links?.zenodo)){const row=external(p.citationKey,'zenodo'),card=node('article');card.className='dataset-item';card.append(node('h3',p.title));metadata(card,row);if(row?.payload){const v=row.payload;card.append(node('p',`${v.views} Aufrufe · ${v.downloads} Downloads`),link('Datensatz bei Zenodo',v.url));}else{const empty=node('p','Noch keine Daten erfasst. Zenodo unter „Datenquellen“ aktualisieren.');empty.className='empty';card.append(empty);}datasets.append(card);}
+    for(const p of data.publications.filter(p=>p.links?.zenodo)){const row=external(p.citationKey,'zenodo'),card=node('article');card.className='dataset-item';card.append(node('h3',p.title));metadata(card,row);if(row?.payload){const v=row.payload;card.append(node('p',`${v.views} Aufrufe · ${v.downloads} Downloads`),link('Datensatz bei Zenodo',v.url));}else{const empty=node('p','Noch keine Daten erfasst. Zenodo unter „Datenquellen“ aktualisieren.');empty.className='empty';card.append(empty);}const history=(data.zenodoSnapshots||[]).filter(r=>r.publication===p.citationKey).sort((a,b)=>a.day.localeCompare(b.day));
+      const measured=new Map(history.map(r=>[r.day,r]));const days=[];if(history.length){for(let day=new Date(history[0].day+'T00:00:00Z');day<=new Date(history.at(-1).day+'T00:00:00Z');day.setUTCDate(day.getUTCDate()+1))days.push(day.toISOString().slice(0,10));}
+      historyChart(card,days,[{label:'Aufrufe',data:days.map(d=>measured.has(d)?Number(measured.get(d).payload.views):null),borderColor:'#3869cf'},{label:'Downloads',data:days.map(d=>measured.has(d)?Number(measured.get(d).payload.downloads):null),borderColor:'#167d76'}],'Gespeicherte Zenodo-Messstände · keine Rekonstruktion fehlender Tage');
+      const historyDetails=node('details');historyDetails.className='data-details';historyDetails.append(node('summary','Zenodo-Messstände als Tabelle anzeigen'));const historyTable=node('div');historyTable.className='table-wrap';historyDetails.append(historyTable);card.append(historyDetails);table(historyTable,['Tag (UTC)','Aufrufe gesamt','Downloads gesamt'],history.map(r=>[r.day,r.payload.views,r.payload.downloads]),'Der Verlauf beginnt mit dem nächsten erfolgreichen Zenodo-Abruf.');datasets.append(card);}
     if(!datasets.children.length)datasets.append(node('p','Keine Zenodo-Pakete hinterlegt.'));
     const labels={'short-bio':'Kurzbiografie',about:'Über mich',research:'Forschung',publications:'Publikationen',service:'Akademischer Service',news:'Neuigkeiten',contact:'Kontakt',i18n:'Sprachdaten'};
     const sections=['short-bio','about','research','publications','service','news','contact'];
@@ -154,18 +185,18 @@
     if(!payload?.totals||!Number.isFinite(payload.totals.visits)||payload.totals.visits<0
       ||!['aggregate','detailed'].includes(payload.mode)||!Number.isFinite(payload.trackingStarted)
       ||!Number.isFinite(new Date(payload.trackingStarted*1000).getTime())
-      ||!['publications','visits','external','monthly','snapshots','engagement','conversion','reading'].every(key=>Array.isArray(payload[key])))throw Error(incomplete);
+      ||!['publications','visits','external','monthly','snapshots','engagement','conversion','reading','daily'].every(key=>Array.isArray(payload[key])))throw Error(incomplete);
     const previous=data;
     try{data=payload;render();}catch(_){data=previous;if(data)render();throw Error(incomplete);}
     apiAvailable=true;el('status').closest('.status-line').classList.remove('has-error');showHelp();
   }
-  function controls(disabled){el('refresh').disabled=disabled;el('refresh-dashboard').disabled=disabled;el('chart-range').disabled=!data;for(const id of['sync-research','check-links'])el(id).disabled=disabled||!apiAvailable;for(const button of document.querySelectorAll('[data-source-kind]'))button.disabled=disabled||!apiAvailable;}
+  function controls(disabled){el('refresh').disabled=disabled;el('refresh-dashboard').disabled=disabled;el('chart-range').disabled=!data;el('daily-range').disabled=!data;el('daily-average').disabled=!data;for(const id of['sync-research','check-links'])el(id).disabled=disabled||!apiAvailable;for(const button of document.querySelectorAll('[data-source-kind]'))button.disabled=disabled||!apiAvailable;}
   function loadError(error){
     apiAvailable=false;
     el('status').textContent=`${error.message}${data?' · Die angezeigten Werte stammen aus der letzten erfolgreichen Ansicht.':''}`;
     el('status').closest('.status-line').classList.add('has-error');showHelp(error.code);
     if(!data){
-      applyMode(document.documentElement.dataset.analyticsMode||'aggregate');
+      applyMode(document.documentElement.dataset.analyticsMode||'aggregate');el('daily-panel').hidden=true;
       for(const id of['count','citation-total','zenodo-downloads','zenodo-views','average','actions'])el(id).textContent='–';
       monthlyChart?.destroy();monthlyChart=undefined;el('monthly-chart').hidden=true;
       el('chart-message').textContent='Der Monatsverlauf ist verfügbar, sobald die Statistik wieder geladen werden kann.';
@@ -211,6 +242,8 @@
   }
   el('refresh').onclick=refresh;el('sync-research').onclick=()=>sync();el('check-links').onclick=()=>sync(true);el('publication-filter').onchange=renderCitations;
   el('refresh-dashboard').onclick=()=>refreshDashboard(true);
+  el('daily-range').onchange=()=>{if(data)renderDaily();};
+  el('daily-average').onchange=()=>{if(data)renderDaily();};
   el('chart-range').onchange=()=>{if(data)renderMonthlyChart();};
   el('sources-content').onclick=event=>{const button=event.target.closest('[data-source-kind]');if(button)syncSource(button.dataset.sourcePublication,button.dataset.sourceKind);};
   const sidebar=document.querySelector('.admin-sidebar'),menu=el('menu-toggle');

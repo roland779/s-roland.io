@@ -193,3 +193,9 @@ This project is released under the MIT License — see `LICENSE`.
 
 ## Contact
 If you have questions or find issues, please open an issue or contact the maintainer via the address provided in the project.
+
+### Statistics history views
+
+The aggregate dashboard shows 7/30 UTC calendar days with an optional seven-day mean. Today is highlighted as incomplete and excluded from the mean. Daily data remains limited to the existing 30-day retention. Monthly traffic supports 6/12/24 months; the comparison table uses the two last completed calendar months. Citation totals and net changes have separate charts; missing monthly observations stay gaps.
+
+Successful Zenodo refreshes now save one version-specific snapshot per publication and UTC date, retained for 24 calendar months. Failed refreshes preserve history. Older Zenodo history cannot be reconstructed. Existing CSV column headers remain unchanged, so existing stores load without migration. Upload analytics-csv.php, analytics-lib.php, the admin template and both admin JavaScript files together.

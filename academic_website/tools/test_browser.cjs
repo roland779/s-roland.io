@@ -37,6 +37,10 @@ async function accessibility(){if(!process.env.AXE_PATH)return;await evaluate(fs
   AnalyticsCsvStore::put($t,'external',['publication'=>$id,'kind'=>'links','payload'=>$payload,'checked'=>time(),'success'=>time(),'error'=>null]);
   if(isset($pub['links']['zenodo'])){AnalyticsCsvStore::put($t,'external',['publication'=>$id,'kind'=>'zenodo','payload'=>['source'=>'Zenodo','url'=>'https://zenodo.org/records/18086905','views'=>61,'downloads'=>5],'checked'=>time(),'success'=>time(),'error'=>null]);}
   AnalyticsCsvStore::put($t,'citation_snapshots',['publication'=>$id,'day'=>gmdate('Y-m-d'),'count'=>3]);
+  if(isset($pub['links']['zenodo'])){
+   AnalyticsCsvStore::put($t,'zenodo_snapshots',['publication'=>$id,'day'=>gmdate('Y-m-d',time()-2*86400),'payload'=>['views'=>50,'downloads'=>4]]);
+   AnalyticsCsvStore::put($t,'zenodo_snapshots',['publication'=>$id,'day'=>gmdate('Y-m-d'),'payload'=>['views'=>61,'downloads'=>5]]);
+  }
  }
  });
  `});assert.equal(seed.status,0,seed.stderr||seed.stdout);
@@ -67,7 +71,7 @@ async function accessibility(){if(!process.env.AXE_PATH)return;await evaluate(fs
  assert.ok(await evaluate(`document.querySelector('#citations-content').textContent.includes('<script>window.bad=true</script>')`));
  assert.ok(await evaluate(`document.querySelector('#zenodo-content').textContent.includes('61 Aufrufe')`));
  assert.equal(await evaluate(`document.documentElement.scrollWidth<=window.innerWidth`),true,'Desktop must fit viewport');await screenshot('admin-desktop');
- await evaluate(`document.querySelector('#impact').scrollIntoView();document.querySelector('#publication-filter').value='SchreiberZylka2020';document.querySelector('#publication-filter').dispatchEvent(new Event('change'));document.querySelector('#citations-content details').open=true;`);await screenshot('admin-citations');
+ await evaluate(`document.querySelector('#impact').scrollIntoView({behavior:'instant',block:'start'});document.querySelector('#publication-filter').value='SchreiberZylka2020';document.querySelector('#publication-filter').dispatchEvent(new Event('change'));document.querySelector('#citations-content details').open=true;`);await screenshot('admin-citations');
  await evaluate(`document.querySelector('#sync-research').click()`);await waitFor(`document.querySelector('#sync-status').textContent.includes('Abruf abgeschlossen')`);
  assert.ok(await evaluate(`document.querySelector('#sync-status').textContent.includes('0 Fehler')`));
  await evaluate(`document.querySelector('#check-links').click()`);await waitFor(`document.querySelector('#link-status').textContent.includes('Abruf abgeschlossen')`);
@@ -83,11 +87,11 @@ async function accessibility(){if(!process.env.AXE_PATH)return;await evaluate(fs
  for(const width of[320,375,768,1024]){await command('Emulation.setDeviceMetricsOverride',{width,height:844,deviceScaleFactor:1,mobile:width<800});assert.equal(await evaluate(`document.documentElement.scrollWidth<=innerWidth`),true,'Dashboard fits width '+width);}
  await command('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:true});
  for(const section of ['comparison','interest','impact','datasets','reading','health','visitors']){
-  await evaluate(`document.querySelector('#${section}').scrollIntoView()`);
+  await evaluate(`document.querySelector('#${section}').scrollIntoView({behavior:'instant',block:'start'})`);
   assert.equal(await evaluate(`document.documentElement.scrollWidth<=window.innerWidth`),true,'Mobile section must fit viewport: '+section);
  }
  assert.equal(await evaluate(`document.documentElement.scrollWidth<=window.innerWidth`),true,'Mobile must fit viewport');
- await evaluate(`document.querySelector('#impact').scrollIntoView()`);await screenshot('admin-mobile-citations');
+ await evaluate(`document.querySelector('#impact').scrollIntoView({behavior:'instant',block:'start'})`);await screenshot('admin-mobile-citations');
  await command('Emulation.setDeviceMetricsOverride',{width:1440,height:1000,deviceScaleFactor:1,mobile:false});
  const maintenanceBefore=requests.filter(url=>url.includes('action=maintenance')).length;
  await command('Page.navigate',{url:base+'/'});await waitFor(`document.querySelector('.analytics-consent button')&&document.querySelector('[data-publication]')`);
@@ -129,10 +133,25 @@ async function accessibility(){if(!process.env.AXE_PATH)return;await evaluate(fs
  await evaluate(`document.querySelector('#chart-range').value='6';document.querySelector('#chart-range').dispatchEvent(new Event('change'))`);
  assert.equal(await evaluate(`Chart.getChart('monthly-canvas').data.labels.length`),6,'Range filter updates the actual chart');
  assert.equal(await evaluate(`Chart.getChart('monthly-canvas').data.datasets[0].data.at(-1)`),1);
- assert.equal(await evaluate(`Chart.getChart('monthly-canvas').data.datasets.at(-1).data.at(-1)`),null,'Missing citation baseline stays null');
- await evaluate(`document.querySelector('#comparison').scrollIntoView()`);
+ assert.equal(await evaluate(`Chart.getChart('monthly-canvas').data.datasets.length`),1,'Traffic chart has no empty citation series');
+ assert.equal(await evaluate(`!!Chart.getChart('monthly-canvas').scales.citations`),false,'No secondary citation axis');
+ assert.equal(await evaluate(`Chart.getChart('daily-canvas').data.labels.length`),30);
+ assert.equal(await evaluate(`Chart.getChart('daily-canvas').data.datasets[1].data.at(-1)`),null,'Incomplete today has no rolling mean');
+ assert.deepEqual(await evaluate(`Chart.getChart(document.querySelector('#zenodo-content canvas')).data.datasets[0].data`),[50,null,61],'Zenodo retains missing observation days as gaps');
+ assert.equal(await evaluate(`Chart.getChart(document.querySelector('#zenodo-content canvas')).data.datasets[0].spanGaps`),false);
+ assert.equal(await evaluate(`document.querySelectorAll('#comparison-table thead th')[2].textContent.slice(0,7)`),await evaluate(`ResearchMetrics.months().at(-2)`),'Compare the last completed month');
+ await evaluate(`document.querySelector('#daily-range').value='7';document.querySelector('#daily-range').dispatchEvent(new Event('change'))`);
+ assert.equal(await evaluate(`Chart.getChart('daily-canvas').data.labels.length`),7);
+ await evaluate(`document.querySelector('#daily-average').click()`);
+ assert.equal(await evaluate(`Chart.getChart('daily-canvas').data.datasets.length`),1);
+ await evaluate(`document.querySelector('#chart-range').value='24';document.querySelector('#chart-range').dispatchEvent(new Event('change'))`);
+ assert.equal(await evaluate(`Chart.getChart('monthly-canvas').data.labels.length`),24);
+ assert.ok(await evaluate(`!document.querySelector('#comparison-table').textContent.includes('laufend')`));
+ await evaluate(`document.querySelector('#daily-panel').scrollIntoView({behavior:'instant',block:'start'})`);await screenshot('admin-daily-chart');
+ await evaluate(`document.querySelector('#chart-range').value='6';document.querySelector('#chart-range').dispatchEvent(new Event('change'))`);
+ await evaluate(`document.querySelector('#comparison').scrollIntoView({behavior:'instant',block:'start'})`);
  await new Promise(r=>setTimeout(r,400));
- async function clickLegend(){const point=await evaluate(`(()=>{const chart=Chart.getChart('monthly-canvas'),hit=chart.legend.legendHitBoxes[0],rect=chart.canvas.getBoundingClientRect();return{x:rect.left+hit.left+hit.width/2,y:rect.top+hit.top+hit.height/2};})()`);await command('Input.dispatchMouseEvent',{type:'mouseMoved',...point});for(const type of['mousePressed','mouseReleased'])await command('Input.dispatchMouseEvent',{type,...point,button:'left',clickCount:1});}
+ async function clickLegend(){await evaluate(`document.querySelector("#monthly-canvas").scrollIntoView({behavior:"instant",block:"center"})`);await evaluate(`new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))`);const point=await evaluate(`(()=>{const chart=Chart.getChart('monthly-canvas'),hit=chart.legend.legendHitBoxes[0],rect=chart.canvas.getBoundingClientRect();return{x:rect.left+hit.left+hit.width/2,y:rect.top+hit.top+hit.height/2};})()`);await command('Input.dispatchMouseEvent',{type:'mouseMoved',...point});for(const type of['mousePressed','mouseReleased'])await command('Input.dispatchMouseEvent',{type,...point,button:'left',clickCount:1});}
  await clickLegend();
  await waitFor(`!Chart.getChart('monthly-canvas').isDatasetVisible(0)`);
  await clickLegend();
@@ -142,6 +161,10 @@ async function accessibility(){if(!process.env.AXE_PATH)return;await evaluate(fs
  await evaluate(`window.scrollTo(0,0)`);await screenshot('admin-aggregate-desktop');
  await command('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:true});await screenshot('admin-aggregate-mobile');
  await accessibility();
+ await evaluate(`document.querySelector('#daily-panel').scrollIntoView({behavior:'instant',block:'start'})`);await screenshot('admin-daily-mobile');
+ assert.equal(await evaluate(`document.documentElement.scrollWidth<=window.innerWidth`),true,'Daily chart fits mobile width');
+ await evaluate(`document.querySelector('#datasets').scrollIntoView({behavior:'instant',block:'start'})`);await screenshot('admin-zenodo-mobile');
+ assert.equal(await evaluate(`document.documentElement.scrollWidth<=window.innerWidth`),true,'Zenodo history fits mobile width');
  await command('Emulation.setDeviceMetricsOverride',{width:1440,height:1000,deviceScaleFactor:1,mobile:false});
  assert.equal(await evaluate(`document.querySelector('#interest').hidden&&document.querySelector('#reading').hidden&&document.querySelector('#visitors').hidden`),true,'Unsupported individual metrics are hidden');
  // Deliberately inject transport/API failures without changing real statistics.

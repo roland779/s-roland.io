@@ -15,3 +15,15 @@ console.log('Passed: calendar year boundary, last monthly snapshot, negative cit
 const aggregate={...data,mode:'aggregate',monthly:[{month:'2026-01',kind:'visit',count:99},{month:'2026-01',kind:'pageview',count:3}]};
 const aggregateMonth=model.monthly(aggregate,new Date('2026-01-25T00:00:00Z')).at(-1);
 assert.equal(aggregateMonth.visits,3);assert.equal(aggregateMonth.clicks,null,'Aggregate mode must not show old visitor/click counts');
+assert.equal(model.monthly(aggregate).length,24);
+const dailyData={trackingStarted:Date.parse('2026-01-20T00:00:00Z')/1000,daily:[{day:'2026-01-20',count:7}]};
+const days=model.daily(dailyData,new Date('2026-01-27T12:00:00Z'));
+assert.equal(days.length,30);
+assert.equal(days.find(r=>r.day==='2026-01-19').count,null,'No invented zero before tracking');
+assert.equal(days.find(r=>r.day==='2026-01-21').count,0,'No requests after tracking is a measured zero');
+assert.equal(days.find(r=>r.day==='2026-01-25').average,null,'Mean needs seven measured days');
+assert.equal(days.find(r=>r.day==='2026-01-26').average,1);
+assert.equal(model.daily(dailyData,new Date('2026-01-27T12:00:00Z'),7).length,7);
+const partialStart={...dailyData,trackingStarted:Date.parse('2026-01-20T12:00:00Z')/1000};
+assert.equal(model.daily(partialStart,new Date('2026-01-27T12:00:00Z')).find(r=>r.day==='2026-01-26').average,null,'Exclude partial first day from the mean');
+assert.equal(model.daily(partialStart,new Date('2026-01-27T12:00:00Z')).at(-1).average,0,'Seven complete days after the partial first day have a mean');
