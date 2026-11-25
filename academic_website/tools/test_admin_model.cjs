@@ -27,3 +27,27 @@ assert.equal(model.daily(dailyData,new Date('2026-01-27T12:00:00Z'),7).length,7)
 const partialStart={...dailyData,trackingStarted:Date.parse('2026-01-20T12:00:00Z')/1000};
 assert.equal(model.daily(partialStart,new Date('2026-01-27T12:00:00Z')).find(r=>r.day==='2026-01-26').average,null,'Exclude partial first day from the mean');
 assert.equal(model.daily(partialStart,new Date('2026-01-27T12:00:00Z')).at(-1).average,0,'Seven complete days after the partial first day have a mean');
+const now=new Date('2026-11-25T12:00:00Z'),timestamp=now.getTime()/1000;
+const coverageData={publications:[{citationKey:'a',links:{zenodo:'https://zenodo.org/records/123'}},{citationKey:'b',links:{zenodo:'https://zenodo.org/record/123/'}},{citationKey:'c'}],external:[
+ {publication:'a',kind:'citations',payload:{count:0},success:timestamp-86400,checked:timestamp},
+ {publication:'b',kind:'citations',payload:{count:4},success:timestamp-86401,checked:timestamp,error:'Failed'},
+ {publication:'a',kind:'zenodo',payload:{views:8,downloads:0},success:timestamp,checked:timestamp}
+]};
+const coverage=model.sourceCoverage(coverageData,'citations',now);
+assert.deepEqual([coverage.expected,coverage.available,coverage.missing,coverage.stale,coverage.errors,coverage.oldest],[3,2,1,1,1,timestamp-86401]);
+const zenodoCoverage=model.sourceCoverage(coverageData,'zenodo',now);
+assert.deepEqual([zenodoCoverage.expected,zenodoCoverage.available,zenodoCoverage.missing],[1,1,0],'Shared record with one missing publication cache remains covered once');
+assert.equal(zenodoCoverage.rows[0].payload.downloads,0,'Zero downloads is valid coverage');
+coverageData.external.push({publication:'b',kind:'zenodo',payload:{views:12,downloads:2},success:timestamp+0,checked:timestamp+1,error:'Failed after successful cache'});
+coverageData.external[2].success=timestamp-60;
+const shared=model.sourceCoverage(coverageData,'zenodo',now);
+assert.deepEqual([shared.available,shared.errors,shared.rows[0].payload.views],[1,1,12],'Shared records use the newest successful cached total and report the latest attempt error');
+assert.equal(model.sourceCoverage({publications:[],external:[]},'zenodo',now).expected,0);
+const invalid={publications:[{citationKey:'a'}],external:[{publication:'a',kind:'citations',payload:{count:NaN},error:'Failed'}]};
+assert.equal(model.sourceCoverage(invalid,'citations',now).missing,1);
+invalid.external[0].payload.count=0;
+assert.equal(model.sourceCoverage(invalid,'citations',now).unknown,1,'Unknown freshness is explicit');
+assert.equal(model.monthCoverage(Date.parse('2026-10-15T12:00:00Z')/1000,'2026-10'),'Teilweise erfasst');
+assert.equal(model.monthCoverage(Date.parse('2026-10-01T00:00:00Z')/1000,'2026-10'),'Vollständiger Erfassungszeitraum');
+assert.equal(model.monthCoverage(Date.parse('2026-10-01T00:00:00Z')/1000,'2026-09'),'Nicht erfasst');
+console.log('Passed: source coverage, zero counts, shared Zenodo records, stale/failed/missing sources, unknown freshness and partial months.');

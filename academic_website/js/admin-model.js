@@ -38,7 +38,36 @@
       return {...r,average:completeStart&&window.length===7&&window.every(v=>v.count!==null)?window.reduce((n,v)=>n+v.count,0)/7:null};
     }).slice(-length);
   }
-  const api = {months,citationMonths,monthly,daily};
+  function sourceCoverage(data, kind, now = new Date()) {
+    const groups = new Map(), fields = kind==='citations'?['count']:['views','downloads'];
+    for(const pub of data.publications.filter(p=>kind==='citations'||p.links?.zenodo)){
+      const row=data.external.find(r=>r.publication===pub.citationKey&&r.kind===kind);
+      const url=pub.links?.zenodo||row?.payload?.url||'',record=url.match(/zenodo\.org\/records?\/(\d+)/i);
+      const key=kind==='citations'?pub.citationKey:(record?'zenodo:'+record[1]:url);
+      if(!groups.has(key))groups.set(key,[]);
+      if(row)groups.get(key).push(row);
+    }
+    const result={expected:groups.size,available:0,missing:0,stale:0,errors:0,unknown:0,oldest:null,rows:[]};
+    for(const entries of groups.values()){
+      const valid=entries.filter(r=>r.payload&&fields.every(f=>typeof r.payload[f]==='number'&&Number.isFinite(r.payload[f])&&r.payload[f]>=0));
+      const row=valid.sort((a,b)=>Number(b.success||0)-Number(a.success||0))[0];
+      const lastAttempt=[...entries].sort((a,b)=>Number(b.checked||0)-Number(a.checked||0))[0];
+      if(lastAttempt?.error)result.errors++;
+      if(!row){result.missing++;continue;}
+      result.available++;result.rows.push(row);
+      const success=Number(row.success);
+      if(!Number.isFinite(success)||success<=0||success>now.getTime()/1000){result.unknown++;continue;}
+      result.oldest=result.oldest===null?success:Math.min(result.oldest,success);
+      if(now.getTime()/1000-success>86400)result.stale++;
+    }
+    return result;
+  }
+  function monthCoverage(started, month) {
+    const start=Date.parse(month+'-01T00:00:00Z'),[year,m]=month.split('-').map(Number);
+    const end=Date.UTC(year,m,1),tracking=Number(started)*1000;
+    return tracking>=end?'Nicht erfasst':tracking>start?'Teilweise erfasst':'Vollständiger Erfassungszeitraum';
+  }
+  const api = {months,citationMonths,monthly,daily,sourceCoverage,monthCoverage};
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.ResearchMetrics = api;
 })(typeof window !== 'undefined' ? window : globalThis);

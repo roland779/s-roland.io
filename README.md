@@ -196,6 +196,8 @@ If you have questions or find issues, please open an issue or contact the mainta
 
 ### Statistics history views
 
+Metric cards display source coverage and the oldest successful timestamp used in each total. Citation coverage counts publications; Zenodo coverage counts distinct linked record versions and uses the newest valid cached value per shared record. Missing sources, values older than 24 hours, failed last attempts and unknown timestamps are labelled separately. Zero counts remain valid observations. A failed dashboard reload marks retained coverage as a previous view. Monthly coverage is based on the configured recording start; it does not establish server uptime or historical source availability. These indicators require no additional visitor data or storage changes.
+
 The aggregate dashboard shows 7/30 UTC calendar days with an optional seven-day mean. Today is highlighted as incomplete and excluded from the mean. Daily data remains limited to the existing 30-day retention. Monthly traffic supports 6/12/24 months; the comparison table uses the two last completed calendar months. Citation totals and net changes have separate charts; missing monthly observations stay gaps.
 
 Successful Zenodo refreshes now save one version-specific snapshot per publication and UTC date, retained for 24 calendar months. Failed refreshes preserve history. Older Zenodo history cannot be reconstructed. Existing CSV column headers remain unchanged, so existing stores load without migration. Upload analytics-csv.php, analytics-lib.php, the admin template and both admin JavaScript files together.

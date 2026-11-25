@@ -23,6 +23,25 @@
     container.tabIndex=0;container.setAttribute('role','region');container.setAttribute('aria-label',`Tabelle: ${container.closest('section')?.querySelector('h2')?.textContent||headers[0]}`);
   }
   function external(pub,kind){return data.external.find(r=>r.publication===pub&&r.kind===kind);}
+  function coverageCaption(id, summary, noun){
+    const target=el(id);target.replaceChildren();
+    const warning=summary.missing||summary.stale||summary.errors||summary.unknown;
+    target.className=`metric-coverage${warning?' needs-attention':''}`;
+    const unit=summary.expected===1?(noun==='Datensätze'?'Datensatz':'Publikation'):noun;
+    const line=node('span',summary.expected?`${summary.available} von ${summary.expected} ${unit} erfasst`:`Keine ${noun} hinterlegt`);
+    target.append(line);
+    if(summary.expected){
+      const notes=[];
+      if(summary.missing)notes.push(`${summary.missing} fehlen`);
+      if(summary.stale)notes.push(`${summary.stale} älter als 24 Stunden`);
+      if(summary.errors)notes.push(`${summary.errors} mit Abruffehler`);
+      if(summary.unknown)notes.push(`${summary.unknown} ohne gültigen Zeitstempel`);
+      if(notes.length)target.append(node('span',notes.join(' · ')));
+      if(summary.oldest!==null)target.append(node('span',`Ältester verwendeter Stand: ${new Date(summary.oldest*1000).toLocaleString('de-DE',{dateStyle:'short',timeStyle:'short'})}`));
+      if(summary.errors&&summary.available)target.append(node('span','Vorhandene erfolgreiche Messstände bleiben berücksichtigt.'));
+    }
+    const details=node('a','Quellen prüfen');details.href='#sources';target.append(details);
+  }
   function metadata(container,row) {
     const p=node('p',row ? `Letzter Erfolg: ${date(row.success)} · Letzter Versuch: ${date(row.checked)}` : 'Noch nicht abgerufen.');p.className='external-meta';container.append(p);
     if(row?.error){const e=node('p',`Abruf fehlgeschlagen: ${row.error}. Vorhandene Werte stammen vom letzten erfolgreichen Abruf.`);e.className='error';container.append(e);}
@@ -124,18 +143,19 @@
     applyMode(data.mode);
     el('count').textContent=data.totals.visits;el('average').textContent=duration(data.totals.average);
     el('actions').textContent=data.engagement.reduce((n,r)=>n+Number(r.clicks),0);
-    const available=data.publications.map(p=>external(p.citationKey,'citations')).filter(r=>r?.payload);
-    el('citation-total').textContent=available.length?`${available.reduce((n,r)=>n+Number(r.payload.count),0)}${available.length<data.publications.length?' (teilweise)':''}`:'–';
-    const zenodoPubs=data.publications.filter(p=>p.links?.zenodo),seenRecords=new Set(),zenodo=[];
-    for(const p of zenodoPubs){const row=external(p.citationKey,'zenodo');if(row?.payload&&!seenRecords.has(row.payload.url||p.links.zenodo)){seenRecords.add(row.payload.url||p.links.zenodo);zenodo.push(row);}}
-    const complete=zenodoPubs.every(p=>external(p.citationKey,'zenodo')?.payload);
-    for(const [id,key]of [['zenodo-downloads','downloads'],['zenodo-views','views']])el(id).textContent=zenodo.length?`${zenodo.reduce((n,r)=>n+Number(r.payload[key]),0)}${complete?'':' (teilweise)'}`:'–';
+    const citations=ResearchMetrics.sourceCoverage(data,'citations'),zenodoCoverage=ResearchMetrics.sourceCoverage(data,'zenodo');
+    const available=citations.rows,zenodo=zenodoCoverage.rows;
+    el('citation-total').textContent=available.length?`${available.reduce((n,r)=>n+Number(r.payload.count),0)}${citations.missing?' (teilweise)':''}`:'–';
+    for(const [id,key]of [['zenodo-downloads','downloads'],['zenodo-views','views']])el(id).textContent=zenodo.length?`${zenodo.reduce((n,r)=>n+Number(r.payload[key]),0)}${zenodoCoverage.missing?' (teilweise)':''}`:'–';
+    coverageCaption('citation-coverage',citations,'Publikationen');
+    for(const id of ['zenodo-downloads-coverage','zenodo-views-coverage'])coverageCaption(id,zenodoCoverage,'Datensätze');
+    el('count-coverage').textContent=`Erfassung ab ${new Date(data.trackingStarted*1000).toLocaleDateString('de-DE',{timeZone:'UTC'})}${aggregate?' · UTC · Heute unvollständig':' · Nur Besuche mit Einwilligung'}`;
     el('zenodo-downloads-note').textContent=zenodo.length?'Kumuliert · verlinkte Versionen':'Noch keine Daten erfasst';
     el('status').textContent=`Aktualisiert · Besuchsdetails: ${data.retentionDays} Tage · ${data.fullIp?'Vollständige':'Gekürzte'} IP-Adressen · Monatsaggregate: 24 Monate`;
     if (aggregate) el('status').textContent = 'Aktualisiert · Reine Aufrufzählung · Tageszahlen: 30 Kalendertage · Monatszahlen: 24 Monate';
     const rows=ResearchMetrics.monthly(data);const current=rows.at(-2),previous=rows.at(-3);
     const started=new Date(data.trackingStarted*1000).toISOString().slice(0,10);
-    el('coverage').textContent=`Monatserfassung aktiviert am ${started}. Monate vor Beginn sind nicht vollständig erfasst. Die Vergleichstabelle zeigt die letzten beiden abgeschlossenen Monate. Der laufende Monat ist im Diagramm heller markiert.`;
+    el('coverage').textContent=`Erfassung ab ${started} (UTC). ${previous.month}: ${ResearchMetrics.monthCoverage(data.trackingStarted,previous.month)}. ${current.month}: ${ResearchMetrics.monthCoverage(data.trackingStarted,current.month)}. Der laufende Monat ist im Diagramm heller markiert.`;
     table(el('comparison-table'),['Kennzahl',`${previous.month} · abgeschlossen`,`${current.month} · abgeschlossen`,'Differenz'],[
       [aggregate?'Seitenaufrufe':'Besuche',previous.visits??'Nicht erfasst',current.visits??'Nicht erfasst',previous.visits===null||current.visits===null?'Nicht verfügbar':signed(current.visits-previous.visits)],
       ...(!aggregate ? [['Publikationsaktionen',previous.clicks??'Nicht erfasst',current.clicks??'Nicht erfasst',previous.clicks===null||current.clicks===null?'Nicht verfügbar':signed(current.clicks-previous.clicks)]] : []),
@@ -193,6 +213,11 @@
   function controls(disabled){el('refresh').disabled=disabled;el('refresh-dashboard').disabled=disabled;el('chart-range').disabled=!data;el('daily-range').disabled=!data;el('daily-average').disabled=!data;for(const id of['sync-research','check-links'])el(id).disabled=disabled||!apiAvailable;for(const button of document.querySelectorAll('[data-source-kind]'))button.disabled=disabled||!apiAvailable;}
   function loadError(error){
     apiAvailable=false;
+    for(const id of ['count-coverage','citation-coverage','zenodo-downloads-coverage','zenodo-views-coverage']){
+      const target=el(id);target.querySelector('.coverage-load-warning')?.remove();
+      if(!data)target.textContent='Datenabdeckung nicht verfügbar.';
+      else {const note=node('span','Ansicht konnte nicht aktualisiert werden.');note.className='coverage-load-warning';target.prepend(note);}
+    }
     el('status').textContent=`${error.message}${data?' · Die angezeigten Werte stammen aus der letzten erfolgreichen Ansicht.':''}`;
     el('status').closest('.status-line').classList.add('has-error');showHelp(error.code);
     if(!data){

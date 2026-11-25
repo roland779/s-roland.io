@@ -305,6 +305,20 @@ h1 {
   margin:16px 0 8px;
   overflow-wrap:anywhere
 }
+.metric-coverage {
+  border-top:1px solid var(--border);
+  margin-top:12px;
+  padding-top:10px;
+  font-size:.875rem;
+  line-height:1.5;
+  color:#344b65;
+  overflow-wrap:anywhere;
+}
+.metric-coverage span { display:block; }
+.metric-coverage a { display:inline-block; margin-top:6px; }
+.metric-coverage.needs-attention { border-top-color:#b57519; }
+.metric-coverage.needs-attention > span:first-child { font-weight:600; }
+.coverage-load-warning { color:#8a281e; font-weight:600; }
 .metric-caption {
   font-size:.75rem;
   color:#62738a;
