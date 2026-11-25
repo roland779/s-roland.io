@@ -48,26 +48,38 @@
   }
   const kinds={citations:'OpenAlex',zenodo:'Zenodo',links:'Publikationslinks'};
   function renderSources(){
-    const container=el('sources-content');container.replaceChildren();
+    const container=el('sources-content'),open=container.querySelector('details')?.open;
+    container.replaceChildren();
+    const attention=node('div'),healthy=node('div'),details=node('details'),summary=node('summary');
+    attention.className=healthy.className='source-grid';details.className='data-details';details.open=!!open;
+    let currentCount=0,attentionCount=0;
     for(const pub of data.publications)for(const kind of ['citations',...(pub.links?.zenodo?['zenodo']:[]),'links']){
       const row=external(pub.citationKey,kind),card=node('article'),head=node('div'),badge=node('span');
       card.className='source-card';head.className='source-head';
       const name=node('span',kinds[kind]);name.className='source-kind';
-      const stale=row?.success&&Date.now()/1000-Number(row.success)>(kind==='links'?7:1)*86400;
-      badge.className=`source-badge ${row?.error?'failed':!row?.success?'pending':stale?'stale':''}`;
-      badge.textContent=row?.error?'Abruffehler':!row?.success?'Noch kein Abruf':stale?'Veraltet':'Aktuell';head.append(name,badge);
+      const success=Number(row?.success),known=Number.isFinite(success)&&success>0&&success<=Date.now()/1000;
+      const stale=known&&Date.now()/1000-success>(kind==='links'?7:1)*86400;
+      badge.className=`source-badge ${row?.error?'failed':!known?'pending':stale?'stale':''}`;
+      badge.textContent=row?.error?'Abruffehler':!known?(row?.payload?'Zeitstand unbekannt':'Noch kein Abruf'):stale?'Veraltet':'Aktuell';head.append(name,badge);
       card.append(head,node('h3',pub.title));metadata(card,row);
       const button=node('button','Quelle aktualisieren');button.type='button';button.dataset.sourcePublication=pub.citationKey;button.dataset.sourceKind=kind;
-      button.setAttribute('aria-label',`${kinds[kind]} für ${pub.title} aktualisieren`);button.disabled=busy;card.append(button);container.append(card);
+      button.setAttribute('aria-label',`${kinds[kind]} für ${pub.title} aktualisieren`);button.disabled=busy;card.append(button);
+      if(known&&row.payload&&!row.error&&!stale){healthy.append(card);currentCount++;}
+      else {attention.append(card);attentionCount++;}
     }
-    if(!container.children.length){const p=node('p','Noch keine Publikationen hinterlegt.');p.className='empty';container.append(p);}
+    if(attentionCount)container.append(node('p',`${attentionCount} Quellen benötigen Aufmerksamkeit.`),attention);
+    if(currentCount){summary.textContent=`${currentCount} Quellen aktuell · Details anzeigen`;details.append(summary,healthy);container.append(details);}
+    if(!currentCount&&!attentionCount){const p=node('p','Noch keine Publikationen hinterlegt.');p.className='empty';container.append(p);}
   }
   function renderMonthlyChart(){
-    const aggregate=data.mode==='aggregate',rows=ResearchMetrics.monthly(data).slice(-Number(el('chart-range').value));
+    const aggregate=data.mode==='aggregate',all=ResearchMetrics.monthly(data),range=el('chart-range').value;
+    const rows=range==='auto'?ResearchMetrics.recordedRange(all,['visits','clicks']):all.slice(-Number(range));
     table(el('monthly-data'),['Monat (UTC)',aggregate?'Seitenaufrufe':'Besuche',...(!aggregate?['Publikationsaktionen']:[]),'Zitations-Nettoänderung'],rows.map(r=>[r.month,r.visits??'Nicht erfasst',...(!aggregate?[r.clicks??'Nicht erfasst']:[]),signed(r.citations)]));
     monthlyChart?.destroy();monthlyChart=undefined;
     const any=rows.some(r=>r.visits!==null&&(r.visits>0||data.mode==='aggregate')||r.clicks>0);
     el('chart-message').textContent=any?'Serien über die Legende ein- und ausblenden. Details erscheinen beim Zeigen auf einen Messpunkt. Werte sind auch als Tabelle verfügbar.':'Noch keine Daten erfasst. Sobald Aufrufe vorliegen, erscheint hier der Monatsverlauf.';
+    const observed=rows.filter(r=>r.visits!==null||r.clicks!==null);
+    if(any&&observed.length===1){el('monthly-chart').hidden=true;el('chart-message').textContent=`Ausgangsstand: ${observed[0].visits??'–'} ${aggregate?'Seitenaufrufe':'Besuche'} im Monat ${observed[0].month}. Der Monatsverlauf entsteht mit weiteren erfassten Monaten. Werte stehen in der Tabelle.`;return;}
     if(!window.Chart){el('monthly-chart').hidden=true;el('chart-message').textContent='Das Diagramm ist nicht verfügbar. Alle Monatswerte stehen in der Tabelle darunter.';return;}
     el('monthly-chart').hidden=!any;if(!any)return;
     const datasets=[{label:aggregate?'Seitenaufrufe':'Besuche',data:rows.map(r=>r.visits),backgroundColor:'#3869cf',borderRadius:4,maxBarThickness:34}];
@@ -80,17 +92,27 @@
   function renderDaily(){
     const aggregate=data.mode==='aggregate';el('daily-panel').hidden=!aggregate;
     dailyChart?.destroy();dailyChart=undefined;if(!aggregate)return;
-    const rows=ResearchMetrics.daily(data,new Date(),Number(el('daily-range').value)),today=new Date().toISOString().slice(0,10);
+    const all=ResearchMetrics.daily(data),range=el('daily-range').value;
+    const rows=range==='auto'?ResearchMetrics.recordedRange(all,['count']):all.slice(-Number(range)),today=new Date().toISOString().slice(0,10);
+    const averageAvailable=rows.some(r=>r.day!==today&&r.average!==null);
+    el('daily-average').disabled=!averageAvailable;
+    el('daily-average-note').textContent=averageAvailable?'':'Ab sieben vollständig erfassten Tagen verfügbar.';
     table(el('daily-data'),['Tag (UTC)','Seitenaufrufe','7-Tage-Mittel'],rows.map(r=>[r.day,r.count??'Nicht erfasst',r.day===today||r.average===null?'–':r.average.toLocaleString('de-DE',{maximumFractionDigits:1})]));
+    const measured=rows.filter(r=>r.count!==null);
+    el('daily-baseline').hidden=measured.length>1;
+    if(measured.length<2){el('daily-chart').hidden=true;el('daily-baseline').textContent=measured.length?`Erster erfasster Tag: ${measured[0].count} Seitenaufrufe am ${measured[0].day}. Der Tagesverlauf entsteht mit weiteren erfassten Tagen.`:'Noch keine Tageswerte erfasst.';return;}
     el('daily-chart').hidden=!window.Chart;if(!window.Chart)return;
     const datasets=[{label:'Seitenaufrufe',data:rows.map(r=>r.count),backgroundColor:rows.map(r=>r.day===today?'#a5bce9':'#3869cf'),borderRadius:4,maxBarThickness:30}];
-    if(el('daily-average').checked)datasets.push({type:'line',label:'7-Tage-Mittel',data:rows.map(r=>r.day===today?null:r.average),borderColor:'#167d76',backgroundColor:'#167d76',pointRadius:0,borderWidth:2,spanGaps:false});
+    if(averageAvailable&&el('daily-average').checked)datasets.push({type:'line',label:'7-Tage-Mittel',data:rows.map(r=>r.day===today?null:r.average),borderColor:'#167d76',backgroundColor:'#167d76',pointRadius:0,borderWidth:2,spanGaps:false});
     dailyChart=new Chart(el('daily-canvas'),{type:'bar',data:{labels:rows.map(r=>new Date(r.day+'T00:00:00Z').toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',timeZone:'UTC'})+(r.day===today?' · heute':'')),datasets},options:chartOptions()});
   }
   function historyChart(container,labels,datasets,description){
     container.append(node('p',description));
     const first=labels.findIndex((_,i)=>datasets.some(d=>d.data[i]!==null));
     if(first<0){const note=node('p','Noch keine vergleichbaren Messstände verfügbar.');note.className='note';container.append(note);return;}
+    if(labels.filter((_,i)=>datasets.some(d=>d.data[i]!==null)).length===1){
+      const note=node('p',`${datasets.some(d=>d.label==='Nettoänderung')?'Ein Vergleichswert erfasst':'Ausgangsstand gespeichert'}: ${datasets.filter(d=>d.data[first]!==null).map(d=>`${d.label}: ${d.data[first]}`).join(' · ')}. Der Verlauf entsteht mit weiteren Messungen.`);note.className='history-baseline';container.append(note);return;
+    }
     if(!window.Chart)return;
     labels=labels.slice(first);datasets=datasets.map(d=>({...d,data:d.data.slice(first)}));
     labels=labels.map(value=>new Date(value+(value.length===7?'-01':'')+'T00:00:00Z').toLocaleDateString('de-DE',{...(value.length===7?{}:{day:'2-digit'}),month:'short',year:'numeric',timeZone:'UTC'}));
@@ -161,6 +183,7 @@
       ...(!aggregate ? [['Publikationsaktionen',previous.clicks??'Nicht erfasst',current.clicks??'Nicht erfasst',previous.clicks===null||current.clicks===null?'Nicht verfügbar':signed(current.clicks-previous.clicks)]] : []),
       ['Zitations-Nettoänderung',signed(previous.citations),signed(current.citations),current.citations===null||previous.citations===null?'Nicht verfügbar':signed(current.citations-previous.citations)]
     ]);
+    if(!['visits','clicks','citations'].some(key=>previous[key]!==null&&current[key]!==null))table(el('comparison-table'),[],[],'Ein Monatsvergleich ist verf\u00fcgbar, sobald vergleichbare Werte f\u00fcr zwei abgeschlossene Monate vorliegen.');
     el('comparison').querySelector('h3').textContent = aggregate ? 'Seitenaufrufe nach Monat' : 'Besuche und Publikationsaktionen nach Monat';
     renderMonthlyChart();renderDaily();renderSources();
     const targets=['doi','fulltext','data','bibtex-copy','bibtex-download','other'];
@@ -210,7 +233,7 @@
     try{data=payload;render();}catch(_){data=previous;if(data)render();throw Error(incomplete);}
     apiAvailable=true;el('status').closest('.status-line').classList.remove('has-error');showHelp();
   }
-  function controls(disabled){el('refresh').disabled=disabled;el('refresh-dashboard').disabled=disabled;el('chart-range').disabled=!data;el('daily-range').disabled=!data;el('daily-average').disabled=!data;for(const id of['sync-research','check-links'])el(id).disabled=disabled||!apiAvailable;for(const button of document.querySelectorAll('[data-source-kind]'))button.disabled=disabled||!apiAvailable;}
+  function controls(disabled){el('refresh').disabled=disabled;el('refresh-dashboard').disabled=disabled;el('chart-range').disabled=!data;el('daily-range').disabled=!data;el('daily-average').disabled=!data||!!el('daily-average-note').textContent;for(const id of['sync-research','check-links'])el(id).disabled=disabled||!apiAvailable;for(const button of document.querySelectorAll('[data-source-kind]'))button.disabled=disabled||!apiAvailable;}
   function loadError(error){
     apiAvailable=false;
     for(const id of ['count-coverage','citation-coverage','zenodo-downloads-coverage','zenodo-views-coverage']){

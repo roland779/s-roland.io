@@ -319,6 +319,14 @@ h1 {
 .metric-coverage.needs-attention { border-top-color:#b57519; }
 .metric-coverage.needs-attention > span:first-child { font-weight:600; }
 .coverage-load-warning { color:#8a281e; font-weight:600; }
+.history-baseline {
+  padding:14px 16px;
+  border:1px solid var(--border);
+  border-radius:8px;
+  color:#344b65;
+  background:#f7f9fc;
+  line-height:1.6;
+}
 .metric-caption {
   font-size:.75rem;
   color:#62738a;

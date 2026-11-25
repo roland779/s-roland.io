@@ -51,3 +51,6 @@ assert.equal(model.monthCoverage(Date.parse('2026-10-15T12:00:00Z')/1000,'2026-1
 assert.equal(model.monthCoverage(Date.parse('2026-10-01T00:00:00Z')/1000,'2026-10'),'Vollständiger Erfassungszeitraum');
 assert.equal(model.monthCoverage(Date.parse('2026-10-01T00:00:00Z')/1000,'2026-09'),'Nicht erfasst');
 console.log('Passed: source coverage, zero counts, shared Zenodo records, stale/failed/missing sources, unknown freshness and partial months.');
+assert.deepEqual(model.recordedRange([{count:null},{count:0},{count:null},{count:2}],['count']),[{count:0},{count:null},{count:2}],'Trim leading unrecorded days, retain measured zero and internal gaps');
+assert.deepEqual(model.recordedRange([{visits:null,clicks:null}],['visits','clicks']),[]);
+assert.equal(model.recordedRange([{visits:null,clicks:0}],['visits','clicks']).length,1);

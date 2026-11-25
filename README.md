@@ -196,6 +196,8 @@ If you have questions or find issues, please open an issue or contact the mainta
 
 ### Statistics history views
 
+History selectors default to the available recording period (up to 30 days or 24 months), retaining zero observations and internal gaps. Explicit 7/30-day and 6/12/24-month ranges remain available. Single observations appear as compact baselines; monthly comparisons wait for comparable completed months. The seven-day mean is unavailable until enough fully recorded past days exist. Current source cards are collapsed together, while stale, missing, failed or undated sources stay visible.
+
 Metric cards display source coverage and the oldest successful timestamp used in each total. Citation coverage counts publications; Zenodo coverage counts distinct linked record versions and uses the newest valid cached value per shared record. Missing sources, values older than 24 hours, failed last attempts and unknown timestamps are labelled separately. Zero counts remain valid observations. A failed dashboard reload marks retained coverage as a previous view. Monthly coverage is based on the configured recording start; it does not establish server uptime or historical source availability. These indicators require no additional visitor data or storage changes.
 
 The aggregate dashboard shows 7/30 UTC calendar days with an optional seven-day mean. Today is highlighted as incomplete and excluded from the mean. Daily data remains limited to the existing 30-day retention. Monthly traffic supports 6/12/24 months; the comparison table uses the two last completed calendar months. Citation totals and net changes have separate charts; missing monthly observations stay gaps.

@@ -67,7 +67,11 @@
     const end=Date.UTC(year,m,1),tracking=Number(started)*1000;
     return tracking>=end?'Nicht erfasst':tracking>start?'Teilweise erfasst':'Vollständiger Erfassungszeitraum';
   }
-  const api = {months,citationMonths,monthly,daily,sourceCoverage,monthCoverage};
+  function recordedRange(rows, fields) {
+    const first=rows.findIndex(r=>fields.some(field=>r[field]!==null&&r[field]!==undefined));
+    return first<0?[]:rows.slice(first);
+  }
+  const api = {months,citationMonths,monthly,daily,sourceCoverage,monthCoverage,recordedRange};
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.ResearchMetrics = api;
 })(typeof window !== 'undefined' ? window : globalThis);

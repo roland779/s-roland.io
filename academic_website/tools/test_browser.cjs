@@ -66,6 +66,8 @@ async function accessibility(){if(!process.env.AXE_PATH)return;await evaluate(fs
  assert.ok(await evaluate(`document.querySelector('#zenodo-views-coverage').textContent.includes('1 von 1 Datensatz erfasst')`));
  assert.ok(await evaluate(`document.querySelector('#citation-coverage').textContent.includes('verwendeter Stand')`));
  assert.equal(await evaluate(`document.querySelectorAll('.source-card').length`),9,'One status card per publication/source');
+ assert.equal(await evaluate(`document.querySelector('#sources-content details').open`),false,'Healthy sources start collapsed');
+ assert.equal(await evaluate(`document.querySelector('#citations-content canvas')===null&&document.querySelector('#citations-content .history-baseline')!==null`),true,'A single citation snapshot uses a compact baseline');
  assert.ok(await evaluate(`document.querySelector('#chart-message').textContent.includes('Noch keine Daten erfasst')`),'No fabricated monthly history on first snapshot');
  await evaluate(`document.querySelector('[data-source-kind="citations"]').click()`);
  await waitFor(`document.querySelector('#source-status').textContent.includes('Gespeicherter Stand verwendet')`);
@@ -132,7 +134,7 @@ async function accessibility(){if(!process.env.AXE_PATH)return;await evaluate(fs
  await command('Page.navigate',{url:base+'/admin.php'});await waitFor(`document.querySelector('#count')?.textContent==='1'`);
  await waitFor(`document.querySelector('#dashboard-refresh-status').textContent.includes('bereits aktualisiert')&&!document.querySelector('#refresh-dashboard').disabled`);
  await waitFor(`!!Chart.getChart('monthly-canvas')`);
- assert.equal(await evaluate(`Chart.getChart('monthly-canvas').data.labels.length`),12);
+ assert.equal(await evaluate(`Chart.getChart('monthly-canvas').data.labels.length`),6);
  await evaluate(`document.querySelector('#chart-range').value='6';document.querySelector('#chart-range').dispatchEvent(new Event('change'))`);
  assert.equal(await evaluate(`Chart.getChart('monthly-canvas').data.labels.length`),6,'Range filter updates the actual chart');
  assert.equal(await evaluate(`Chart.getChart('monthly-canvas').data.datasets[0].data.at(-1)`),1);
@@ -172,6 +174,21 @@ async function accessibility(){if(!process.env.AXE_PATH)return;await evaluate(fs
  assert.equal(await evaluate(`document.querySelector('#interest').hidden&&document.querySelector('#reading').hidden&&document.querySelector('#visitors').hidden`),true,'Unsupported individual metrics are hidden');
  // Deliberately inject transport/API failures without changing real statistics.
  await evaluate(`(async()=>{window.__originalFetch=window.fetch;window.__baseline=await(await window.fetch(${JSON.stringify(base+'/analytics-api.php?action=stats')})).json();window.__replyStats=structuredClone(window.__baseline);window.fetch=async function(input,options){const url=String(input);if(url.includes('action=stats'))return new Response(JSON.stringify(window.__replyStats),{status:200,headers:{'Content-Type':'application/json'}});return window.__originalFetch(input,options);};})()`);
+ // A new installation with three calendar dates must not show empty history or unavailable comparisons.
+ await evaluate(`(()=>{const d=window.__replyStats,now=new Date(),today=Date.UTC(now.getUTCFullYear(),now.getUTCMonth(),now.getUTCDate());d.trackingStarted=(today-2*86400000+3600000)/1000;d.monthly=d.monthly.filter(r=>r.month===now.toISOString().slice(0,7));d.zenodoSnapshots=d.zenodoSnapshots.filter(r=>r.day===now.toISOString().slice(0,10));document.querySelector('#daily-range').value='auto';document.querySelector('#chart-range').value='auto';document.querySelector('#refresh').click();})()`);
+ await waitFor(`document.querySelector('#daily-average').disabled&&document.querySelector('#monthly-chart').hidden`);
+ assert.equal(await evaluate(`Chart.getChart('daily-canvas').data.labels.length`),3,'Auto daily range begins with actual collection');
+ assert.equal(await evaluate(`document.querySelector('#daily-average-note').textContent.includes('sieben')`),true);
+ assert.equal(await evaluate(`document.querySelector('#comparison-table table')===null`),true,'No empty month comparison');
+ assert.equal(await evaluate(`document.querySelector('#zenodo-content canvas')===null&&document.querySelector('#zenodo-content .history-baseline')!==null`),true,'One Zenodo observation is a baseline');
+ await evaluate(`window.scrollTo({top:0,behavior:'instant'})`);await screenshot('admin-first-days');
+ await evaluate(`document.querySelector('#daily-panel').scrollIntoView({behavior:'instant',block:'start'})`);await screenshot('admin-first-days-history');
+ await evaluate(`window.__replyStats.trackingStarted=Date.now()/1000;document.querySelector('#refresh').click()`);
+ await waitFor(`document.querySelector('#daily-baseline').textContent.includes('Erster erfasster Tag')`);
+ assert.equal(await evaluate(`document.querySelector('#daily-chart').hidden&&Chart.getChart('daily-canvas')===undefined`),true,'A first-day total does not need a large chart');
+ await evaluate(`window.__replyStats=structuredClone(window.__baseline);document.querySelector('#refresh').click()`);
+ await waitFor(`!document.querySelector('#daily-average').disabled&&!!Chart.getChart('monthly-canvas')`);
+ assert.equal(await evaluate(`Chart.getChart('daily-canvas').data.datasets.length`),1,'Unchecked mean preference survives temporary unavailability');
  await evaluate(`window.__replyStats={totals:{visits:99},publications:[],visits:[]};document.querySelector('#refresh').click()`);
  await waitFor(`document.querySelector('#status').textContent.includes('unvollständig')`);
  assert.equal(await evaluate(`document.querySelector('#count').textContent`),'1','Incomplete responses must not replace previously valid figures');
@@ -184,6 +201,7 @@ async function accessibility(){if(!process.env.AXE_PATH)return;await evaluate(fs
  await evaluate(`window.__replyStats=structuredClone(window.__baseline);document.querySelector('#refresh').click()`);await waitFor(`document.querySelector('#count').textContent==='1'`);
  await evaluate(`(()=>{const d=window.__replyStats;d.external.find(r=>r.kind==='citations').success=Date.now()/1000-172800;const failed=d.external.find(r=>r.kind==='links');failed.error='<img src=x onerror=window.bad=true>';const missing=d.external.filter(r=>r.kind==='citations')[1];d.external=d.external.filter(r=>r!==missing);const original=d.publications.find(p=>p.links?.zenodo),copy=structuredClone(original);copy.citationKey='duplicate-zenodo-test';copy.title='Another paper linking the same Zenodo record';d.publications.push(copy);const record=structuredClone(d.external.find(r=>r.publication===original.citationKey&&r.kind==='zenodo'));record.publication=copy.citationKey;d.external.push(record);document.querySelector('#refresh').click();})()`);
  await waitFor(`document.querySelector('.source-badge.stale')&&document.querySelector('.source-badge.failed')&&document.querySelector('.source-badge.pending')`);
+ assert.equal(await evaluate(`document.querySelector('.source-badge.stale').closest('details')===null&&document.querySelector('.source-badge.failed').closest('details')===null`),true,'Problem sources remain expanded');
  assert.equal(await evaluate(`document.querySelector('#zenodo-downloads').textContent`),'5','Shared Zenodo records must not be double-counted');
  assert.equal(await evaluate(`window.bad===true`),false,'Source error messages must be rendered as text');
  assert.ok(await evaluate(`document.querySelector('#sources-content').textContent.includes('<img src=x onerror=window.bad=true>')`));
@@ -216,7 +234,7 @@ async function accessibility(){if(!process.env.AXE_PATH)return;await evaluate(fs
  await command('Network.setBlockedURLs',{urls:['https://*','*chart-4.6.2.umd.js*']});
  await command('Page.navigate',{url:base+'/admin.php'});await waitFor(`document.querySelector('#count')?.textContent==='1'`);
  assert.ok(await evaluate(`document.querySelector('#chart-message').textContent.includes('nicht verfügbar')`),'Local chart load failure keeps table fallback');
- assert.equal(await evaluate(`document.querySelectorAll('#monthly-data tbody tr').length`),12);
+ assert.equal(await evaluate(`document.querySelectorAll('#monthly-data tbody tr').length`),6);
  await command('Network.setBlockedURLs',{urls:['https://*']});
  const nested=path.join(publicDir,'nested');fs.mkdirSync(nested);for(const f of['admin.php','analytics-api.php','analytics-lib.php','analytics-csv.php'])fs.copyFileSync(path.join(publicDir,f),path.join(nested,f));fs.cpSync(path.join(publicDir,'academic_website'),path.join(nested,'academic_website'),{recursive:true});
  fs.writeFileSync(path.join(nested,'analytics-config.php'),aggregateConfig.replace("__DIR__.'/../data'","dirname(__DIR__,2).'/data'"));
